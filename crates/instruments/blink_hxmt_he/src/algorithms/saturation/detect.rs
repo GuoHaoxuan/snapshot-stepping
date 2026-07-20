@@ -243,6 +243,43 @@ fn is_in_unreliable(t: f64, intervals: &[UnreliableInterval]) -> bool {
     intervals.iter().any(|iv| t >= iv.start && t <= iv.stop)
 }
 
+/// 单个参考盒对某 cross-ref gap 的标定描述子(spec §13/§5b)。
+/// σ_k 由计数给:(σ_k/k)² = 1/C_a_cal + 1/C_ref_cal;跨-ref 相关用共用分子
+/// C_a_cal(评审①):Σ_k[b,b'] = k_b k_b'(δ/C_ref_cal + 1/C_a_cal)。
+#[derive(Debug, Clone)]
+pub struct GapRefCalib {
+    /// 在 `references` 切片里的下标
+    pub ref_idx: usize,
+    /// 标定系数 k = 目标/参考 率比(标定窗内)
+    pub k: f64,
+    /// 标定窗内 target 计数(所有 ref 共用分子)
+    pub c_a_cal: f64,
+    /// 标定窗内该参考盒计数
+    pub c_ref_cal: f64,
+}
+
+/// gap 的协方差块描述子(spec §13)。cross-ref 用 `refs`(每参考盒的 k 与标定窗计数);
+/// degenerate 用端点率 `r_pre/r_post` 与实际事例数 `n_pre/n_post`(自由度)。
+/// `sys_bias_scale` 是退化外推偏差的粗代理 |r_post−r_pre|/(r_pre+r_post)(评审④,
+/// 下界启发式);cross-ref 段为 0。`maskable`=(None,None) 地板填充,不可信、可屏蔽(评审③)。
+#[derive(Debug, Clone, Default)]
+pub struct GapCovBlock {
+    /// cross-ref:参与形状重建的各参考盒标定(空 = degenerate)
+    pub refs: Vec<GapRefCalib>,
+    /// degenerate:gap 前端点率(None = 该端无有效率)
+    pub r_pre: Option<f64>,
+    /// degenerate:gap 后端点率
+    pub r_post: Option<f64>,
+    /// degenerate:前端点 packet 实际事例数(自由度 = n_pre−1)
+    pub n_pre: Option<f64>,
+    /// degenerate:后端点 packet 实际事例数
+    pub n_post: Option<f64>,
+    /// (None,None) 地板填充:率无从估、不入协方差、下游可屏蔽(评审③)
+    pub maskable: bool,
+    /// 系统偏差量级粗代理(评审④);cross-ref 段为 0
+    pub sys_bias_scale: f64,
+}
+
 /// 重建后的补全事件
 #[derive(Debug, Clone)]
 pub struct ReconstructedGap {
@@ -258,9 +295,10 @@ pub struct ReconstructedGap {
     /// 退化 gap = √(σ²_gap / N_lost)，σ²_gap 由 pre/post 包率涨落传播，使方差
     /// 局域在 gap 内（挂 filler）而非畸变相邻真实事件。
     pub filler_weight: f64,
+    /// spec §13 协方差块描述子(下游装配协方差用)
+    pub cov: GapCovBlock,
 }
 
-const EVENTS_PER_PKT: f64 = 109.0;
 const SHAPE_BIN_WIDTH: f64 = 0.001; // 1ms
 
 /// 对单个 box 的 FIFO reset gap 进行光变曲线重建。
@@ -451,12 +489,54 @@ pub fn reconstruct_gaps(
             Some(s2) => (s2 / n_filled_actual as f64).sqrt(),
         };
 
+        // spec §13 协方差块描述子
+        let cov = if used_cross_ref {
+            // 收集参与形状重建的参考盒(bin_refs 里出现过),各算 k 与标定窗计数
+            let mut seen = vec![false; references.len()];
+            let mut refs_calib: Vec<GapRefCalib> = Vec::new();
+            for refs_in_bin in &bin_refs {
+                for &(ref_idx, _, _, _) in refs_in_bin {
+                    if !seen[ref_idx] {
+                        seen[ref_idx] = true;
+                        let (k, c_a, c_ref) = calibrate_counts(
+                            &target.events, &references[ref_idx].events,
+                            &target.unreliable, &references[ref_idx].unreliable,
+                            gap_start, gap_stop, 0.5,
+                        );
+                        refs_calib.push(GapRefCalib {
+                            ref_idx, k, c_a_cal: c_a as f64, c_ref_cal: c_ref as f64,
+                        });
+                    }
+                }
+            }
+            refs_calib.sort_by_key(|r| r.ref_idx);
+            GapCovBlock { refs: refs_calib, ..Default::default() }
+        } else {
+            // degenerate:端点率、实际事例数(自由度)、可屏蔽、系统偏代理
+            let pre = packet_rate_and_n(&target.packets, gap.prev_pkt_idx);
+            let post = packet_rate_and_n(&target.packets, gap.next_pkt_idx);
+            let (r_pre, n_pre) = pre.map_or((None, None), |(r, n)| (Some(r), Some(n)));
+            let (r_post, n_post) = post.map_or((None, None), |(r, n)| (Some(r), Some(n)));
+            let maskable = pre.is_none() && post.is_none();
+            // 评审④:退化外推偏差粗代理 = 端点率相对变化;地板段 ~100%;单侧变化未知→0
+            let sys_bias_scale = match (r_pre, r_post) {
+                (Some(a), Some(b)) if a + b > 0.0 => (b - a).abs() / (a + b),
+                _ if maskable => 1.0,
+                _ => 0.0,
+            };
+            GapCovBlock {
+                r_pre, r_post, n_pre, n_post, maskable, sys_bias_scale,
+                ..Default::default()
+            }
+        };
+
         results.push(ReconstructedGap {
             gap_idx,
             filled_events,
             n_lost,
             has_cross_ref: used_cross_ref,
             filler_weight,
+            cov,
         });
     }
 
@@ -464,9 +544,11 @@ pub fn reconstruct_gaps(
 }
 
 /// 退化(fallback)gap 的 gap 级方差 σ²_gap,由 pre/post 包率涨落传播:
-/// Var(r)=r²/(N−1),N=EVENTS_PER_PKT。两端有率 → (T/2)²(r_pre²+r_post²)/(N−1),
-/// 单侧外推 → T²r²/(N−1)。方差最终挂在 gap 内的 filler 上(局域、不畸变相邻真实
-/// 观测事件),每 filler v=√(σ²_gap/实际filler数),在分配后算(见调用处)。
+/// Var(r)=r²/(n_events−1)。**评审②:率的分子与自由度都用各端点 packet 的实际
+/// n_events**(reset 前后常是残包,≠名义 109),两端各用各的。两端有率 →
+/// (T/2)²(r_pre²/(n_pre−1)+r_post²/(n_post−1)),单侧外推 → T²r²/(n−1)。方差最终挂在
+/// gap 内的 filler 上(局域、不畸变相邻真实观测事件),每 filler v=√(σ²_gap/实际filler
+/// 数),在分配后算(见调用处)。
 /// (None,None):无相邻包率、只能用 MCU 地板率硬填,方差无从估 → 返回 NaN,
 /// 由调用方按 ~100% 不确定(σ²=filler数²)处理,绝不给 0。
 fn degenerate_gap_variance(
@@ -474,22 +556,33 @@ fn degenerate_gap_variance(
     gap: &SaturationInterval,
     gap_dur: f64,
 ) -> f64 {
-    let dof = (EVENTS_PER_PKT - 1.0).max(1.0);
-    let r_pre = packet_rate(packets, gap.prev_pkt_idx);
-    let r_post = packet_rate(packets, gap.next_pkt_idx);
+    let dof = |n: f64| (n - 1.0).max(1.0);
+    let r_pre = packet_rate_and_n(packets, gap.prev_pkt_idx);
+    let r_post = packet_rate_and_n(packets, gap.next_pkt_idx);
     match (r_pre, r_post) {
-        (Some(rp), Some(rn)) => (gap_dur / 2.0).powi(2) * (rp * rp + rn * rn) / dof,
-        (Some(r), None) | (None, Some(r)) => gap_dur.powi(2) * r * r / dof,
+        (Some((rp, np)), Some((rn, nn))) => {
+            (gap_dur / 2.0).powi(2) * (rp * rp / dof(np) + rn * rn / dof(nn))
+        }
+        (Some((r, n)), None) | (None, Some((r, n))) => gap_dur.powi(2) * r * r / dof(n),
         (None, None) => f64::NAN,
     }
 }
 
-/// 从包的 span 估算事件率。
-fn packet_rate(packets: &[PacketInfo], pkt_idx: usize) -> Option<f64> {
+/// 从包的 span 估算事件率与实际事例数(自由度用)。评审②:分子用该包实际 n_events。
+fn packet_rate_and_n(packets: &[PacketInfo], pkt_idx: usize) -> Option<(f64, f64)> {
     packets.iter().find(|p| p.pkt_idx == pkt_idx).and_then(|info| {
         let span = info.span();
-        if span > 1e-9 { Some(EVENTS_PER_PKT / span) } else { None }
+        if span > 1e-9 {
+            Some((info.n_events as f64 / span, info.n_events as f64))
+        } else {
+            None
+        }
     })
+}
+
+/// 从包的 span 估算事件率。
+fn packet_rate(packets: &[PacketInfo], pkt_idx: usize) -> Option<f64> {
+    packet_rate_and_n(packets, pkt_idx).map(|(r, _)| r)
 }
 
 /// 无参考时的 fallback：用 pre/post-reset 包的率线性插值构建 shape。
@@ -522,7 +615,10 @@ fn fill_shape_fallback(
 ///
 /// 在 gap 前后各 margin 秒的窗口内统计双方的事件率（events/有效秒），
 /// 排除各自的 unreliable 区间。
-fn calibrate_ratio_sorted(
+/// 标定窗(gap 前后 ±margin)内 target/ref 的率比 k,连同两侧**事件计数**
+/// (spec §5b 算 σ_k 用:(σ_k/k)²=1/C_a_cal+1/C_ref_cal)。返回 (k, C_a_cal, C_ref_cal);
+/// 参考计数不足(≤10)或时长为 0 时 k=1.0(默认)。
+fn calibrate_counts(
     target_events: &[f64],
     ref_events: &[f64],
     target_unreliable: &[UnreliableInterval],
@@ -530,7 +626,7 @@ fn calibrate_ratio_sorted(
     gap_start: f64,
     gap_stop: f64,
     margin: f64,
-) -> f64 {
+) -> (f64, usize, usize) {
     let windows = [
         (gap_start - margin, gap_start),
         (gap_stop, gap_stop + margin),
@@ -571,13 +667,31 @@ fn calibrate_ratio_sorted(
     }
 
     // 用事件率比值（而非事件数比值），补偿双方有效时长不同
-    if ref_effective > 1e-6 && ref_count > 10 && target_effective > 1e-6 {
+    let k = if ref_effective > 1e-6 && ref_count > 10 && target_effective > 1e-6 {
         let target_rate = target_count as f64 / target_effective;
         let ref_rate = ref_count as f64 / ref_effective;
         target_rate / ref_rate
     } else {
         1.0
-    }
+    };
+    (k, target_count, ref_count)
+}
+
+/// 只要 k 的薄封装(bin 级 shape 构建用,不需要计数)。
+fn calibrate_ratio_sorted(
+    target_events: &[f64],
+    ref_events: &[f64],
+    target_unreliable: &[UnreliableInterval],
+    ref_unreliable: &[UnreliableInterval],
+    gap_start: f64,
+    gap_stop: f64,
+    margin: f64,
+) -> f64 {
+    calibrate_counts(
+        target_events, ref_events, target_unreliable, ref_unreliable, gap_start,
+        gap_stop, margin,
+    )
+    .0
 }
 
 /// 计算窗口 [lo, hi] 内排除 unreliable 区间后的有效时长。
@@ -904,6 +1018,85 @@ mod weight_tests {
             gaps[0].filler_weight > 0.0,
             "(None,None) 地板填充的 filler 方差不应为 0"
         );
+    }
+
+    /// 评审②:率的分子必须是该 packet 的**实际事例数**,不是名义 109。
+    /// 残包(reset 前后常见)只有 50 个事例、span=1s → 率=50/s 而非 109/s。
+    #[test]
+    fn packet_rate_uses_actual_n_events_not_109() {
+        let packets =
+            vec![PacketInfo { pkt_idx: 0, min_met: 0.0, max_met: 1.0, n_events: 50 }];
+        let r = packet_rate(&packets, 0).expect("有 span 应给率");
+        assert!((r - 50.0).abs() < 1e-9, "率应=n_events/span=50，得 {r}");
+    }
+
+    /// 评审②:退化方差的自由度必须用各端点 packet 的**实际 n_events−1**,不是
+    /// 名义 108;且两端率各用各的 n_events(残包 pre=40、post=60)。
+    #[test]
+    fn degenerate_variance_uses_actual_dof_not_108() {
+        let packets = vec![
+            PacketInfo { pkt_idx: 0, min_met: 0.9, max_met: 1.0, n_events: 40 },
+            PacketInfo { pkt_idx: 1, min_met: 1.1, max_met: 1.2, n_events: 60 },
+        ];
+        let mut gap = si(1.0, 1.1);
+        gap.prev_pkt_idx = 0;
+        gap.next_pkt_idx = 1;
+        let gap_dur = 0.1_f64;
+        let got = degenerate_gap_variance(&packets, &gap, gap_dur);
+        // r_pre=40/0.1=400, r_post=60/0.1=600
+        // σ²=(T/2)²(r_pre²/(n_pre−1)+r_post²/(n_post−1))=0.05²(400²/39+600²/59)
+        let (rp, rn) = (400.0_f64, 600.0_f64);
+        let expected = (gap_dur / 2.0).powi(2) * (rp * rp / 39.0 + rn * rn / 59.0);
+        assert!(
+            (got - expected).abs() < expected * 1e-9,
+            "σ²_gap 应用实际自由度:得 {got}, 期望 {expected}"
+        );
+    }
+
+    /// spec §13:退化 gap 的协方差块记录端点率、实际事例数、可屏蔽标志与系统偏
+    /// 代理。r_pre=40/0.1=400、r_post=60/0.1=600、sys_bias_scale=|600−400|/1000=0.2。
+    #[test]
+    fn degenerate_gap_block_records_rates_and_sys_bias() {
+        let events = [spread(0.9, 1.0, 40), spread(1.1, 1.2, 60)].concat();
+        let mut target = make_box(events, vec![si(1.0, 1.1)]);
+        target.packets = vec![
+            PacketInfo { pkt_idx: 0, min_met: 0.9, max_met: 1.0, n_events: 40 },
+            PacketInfo { pkt_idx: 1, min_met: 1.1, max_met: 1.2, n_events: 60 },
+        ];
+        target.gaps[0].prev_pkt_idx = 0;
+        target.gaps[0].next_pkt_idx = 1;
+        let refs: Vec<&BoxReconstructionData> = vec![];
+        let (gaps, _rw) = reconstruct_gaps(&target, &refs);
+        let cov = &gaps[0].cov;
+        assert!((cov.r_pre.unwrap() - 400.0).abs() < 1e-6, "r_pre={:?}", cov.r_pre);
+        assert!((cov.r_post.unwrap() - 600.0).abs() < 1e-6, "r_post={:?}", cov.r_post);
+        assert!((cov.n_pre.unwrap() - 40.0).abs() < 1e-9);
+        assert!((cov.n_post.unwrap() - 60.0).abs() < 1e-9);
+        assert!(!cov.maskable, "有率的退化段不可屏蔽");
+        assert!((cov.sys_bias_scale - 0.2).abs() < 1e-6, "sys_bias={}", cov.sys_bias_scale);
+        assert!(cov.refs.is_empty(), "退化 gap 无 cross-ref 标定");
+    }
+
+    /// spec §13/§5b:cross-ref gap 的块记录每参考盒的 k 与标定窗计数(算 σ_k 用)。
+    /// target 率=2×ref → k=2;标定窗 ±0.5s 内 target 200 事例、ref 100 事例。
+    #[test]
+    fn cross_ref_gap_block_records_k_and_calib_counts() {
+        let target = make_box(
+            [spread(0.5, 1.0, 100), spread(1.1, 1.6, 100)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
+        let ref_b = make_box(ref_ev, vec![]);
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&ref_b]);
+        let cov = &gaps[0].cov;
+        assert_eq!(cov.refs.len(), 1, "应有一个参考盒");
+        let rc = &cov.refs[0];
+        assert_eq!(rc.ref_idx, 0);
+        assert!((rc.k - 2.0).abs() < 1e-6, "k 应=2,得 {}", rc.k);
+        assert!((rc.c_a_cal - 200.0).abs() < 1e-9, "C_a_cal 应=200,得 {}", rc.c_a_cal);
+        assert!((rc.c_ref_cal - 100.0).abs() < 1e-9, "C_ref_cal 应=100,得 {}", rc.c_ref_cal);
+        assert!(cov.r_pre.is_none(), "cross-ref 段无退化端点率");
     }
 
     fn dense_except(lo: f64, hi: f64, per_sec: usize, gap: (f64, f64)) -> Vec<f64> {

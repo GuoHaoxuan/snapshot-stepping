@@ -310,7 +310,9 @@ mod tests {
     }
 
     // ---- assign_gap_fill_channels (band-free 后处理) ----
-    use crate::algorithms::saturation::detect::{SaturationInterval, SaturationType};
+    use crate::algorithms::saturation::detect::{
+        GapCovBlock, SaturationInterval, SaturationType,
+    };
 
     fn si(lo: f64, hi: f64) -> SaturationInterval {
         SaturationInterval {
@@ -348,6 +350,7 @@ mod tests {
             n_lost: n,
             has_cross_ref: true,
             filler_weight: 0.0,
+            cov: GapCovBlock::default(),
         }
     }
 

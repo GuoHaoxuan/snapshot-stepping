@@ -116,6 +116,9 @@ pub struct ReconstructArgs {
     /// Bin width in seconds
     #[arg(long, default_value_t = 1.0)]
     pub bin: f64,
+    /// Optional: write per-gap covariance block table (spec §13) to this file
+    #[arg(long)]
+    pub gapcov_out: Option<std::path::PathBuf>,
 }
 
 #[derive(Args)]

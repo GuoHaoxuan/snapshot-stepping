@@ -10,6 +10,7 @@ import pytest
 # Add scripts/ to import path so tests can `import extract_per_sec_day`.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+sys.path.insert(0, str(REPO_ROOT / "analysis"))
 
 # Known local FITS files used as integration fixtures.
 DATA_DIR = REPO_ROOT / "data"

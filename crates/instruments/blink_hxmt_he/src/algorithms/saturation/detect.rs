@@ -367,9 +367,12 @@ pub fn reconstruct_gaps(
             }
         }
 
-        // 步骤二：确定 N_lost 与退化 filler 的方差权重
+        // 步骤二：确定 N_lost、退化方差、是否真用了 cross-ref
         let n_lost;
-        let filler_weight; // 每 filler 的“仅方差”权重：cross-ref=0，退化=√(σ²/N)
+        // None = cross-ref(filler 权重 0，方差在参考事件)；Some(σ²) = 退化
+        // (Some(NaN) = (None,None) 地板填充，按 ~100% 不确定处理)
+        let filler_sigma2: Option<f64>;
+        let used_cross_ref: bool;
         if has_ref {
             let n_filled = shape.iter().filter(|&&v| v > 0.0).count();
             if n_filled * 100 / n_sbins >= 30 {
@@ -393,20 +396,23 @@ pub fn reconstruct_gaps(
                         }
                     }
                 }
-                filler_weight = 0.0; // 方差由参考事件承载
+                filler_sigma2 = None; // 方差由参考事件承载
+                used_cross_ref = true;
                 eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  cross-ref  cov={n_filled}/{n_sbins}");
             } else {
-                // 参考覆盖不足：退化为 pre/post 率线性插值
+                // 参考覆盖不足：退化为 pre/post 率线性插值（不是 cross-ref）
                 fill_shape_fallback(&mut shape, gap, &target.packets);
                 n_lost = (shape.iter().sum::<f64>() * actual_sbin).round() as usize;
-                filler_weight = degenerate_filler_weight(&target.packets, gap, gap_dur, n_lost);
+                filler_sigma2 = Some(degenerate_gap_variance(&target.packets, gap, gap_dur));
+                used_cross_ref = false;
                 eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  FALLBACK  cov={n_filled}/{n_sbins}");
             }
         } else {
             // 无参考：pre/post 率线性插值
             fill_shape_fallback(&mut shape, gap, &target.packets);
             n_lost = (shape.iter().sum::<f64>() * actual_sbin).round() as usize;
-            filler_weight = degenerate_filler_weight(&target.packets, gap, gap_dur, n_lost);
+            filler_sigma2 = Some(degenerate_gap_variance(&target.packets, gap, gap_dur));
+            used_cross_ref = false;
             eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  NO-REF");
         }
 
@@ -433,11 +439,23 @@ pub fn reconstruct_gaps(
             }
         }
 
+        // 退化 filler 的“仅方差”权重 v=√(σ²_gap/实际filler数),使 Σv²=σ²_gap。
+        // 用 filled_events.len()(逐 bin round 后可 ≠ n_lost),否则下游按实际
+        // filler 数求和时不守恒。cross-ref=0；(None,None) 地板填充按 σ²=filler数²
+        // (~100% 不确定)→ v=√(filler数),绝不给 0。
+        let n_filled_actual = filled_events.len();
+        let filler_weight = match filler_sigma2 {
+            None => 0.0,
+            Some(_) if n_filled_actual == 0 => 0.0,
+            Some(s2) if s2.is_nan() => (n_filled_actual as f64).sqrt(),
+            Some(s2) => (s2 / n_filled_actual as f64).sqrt(),
+        };
+
         results.push(ReconstructedGap {
             gap_idx,
             filled_events,
             n_lost,
-            has_cross_ref: has_ref,
+            has_cross_ref: used_cross_ref,
             filler_weight,
         });
     }
@@ -445,28 +463,25 @@ pub fn reconstruct_gaps(
     (results, ref_weights)
 }
 
-/// 退化(fallback)gap 每个 filler 的“仅方差”权重 v = √(σ²_gap / N_lost)。
-/// σ²_gap 由 pre/post 包率的涨落传播:Var(r)=r²/(N−1),N=EVENTS_PER_PKT；
-/// 线性插值时两端各权重 T/2,单侧外推整段一个 r。方差挂在 gap 内的 filler 上
-/// (Σv²=σ²_gap),局域、且不畸变相邻的真实观测事件。
-fn degenerate_filler_weight(
+/// 退化(fallback)gap 的 gap 级方差 σ²_gap,由 pre/post 包率涨落传播:
+/// Var(r)=r²/(N−1),N=EVENTS_PER_PKT。两端有率 → (T/2)²(r_pre²+r_post²)/(N−1),
+/// 单侧外推 → T²r²/(N−1)。方差最终挂在 gap 内的 filler 上(局域、不畸变相邻真实
+/// 观测事件),每 filler v=√(σ²_gap/实际filler数),在分配后算(见调用处)。
+/// (None,None):无相邻包率、只能用 MCU 地板率硬填,方差无从估 → 返回 NaN,
+/// 由调用方按 ~100% 不确定(σ²=filler数²)处理,绝不给 0。
+fn degenerate_gap_variance(
     packets: &[PacketInfo],
     gap: &SaturationInterval,
     gap_dur: f64,
-    n_lost: usize,
 ) -> f64 {
-    if n_lost == 0 {
-        return 0.0;
-    }
     let dof = (EVENTS_PER_PKT - 1.0).max(1.0);
     let r_pre = packet_rate(packets, gap.prev_pkt_idx);
     let r_post = packet_rate(packets, gap.next_pkt_idx);
-    let sigma2 = match (r_pre, r_post) {
+    match (r_pre, r_post) {
         (Some(rp), Some(rn)) => (gap_dur / 2.0).powi(2) * (rp * rp + rn * rn) / dof,
         (Some(r), None) | (None, Some(r)) => gap_dur.powi(2) * r * r / dof,
-        (None, None) => 0.0, // MCU floor：无率源，方差无从估（极端退化，罕见）
-    };
-    (sigma2 / n_lost as f64).sqrt()
+        (None, None) => f64::NAN,
+    }
 }
 
 /// 从包的 span 估算事件率。
@@ -759,11 +774,135 @@ mod weight_tests {
         let r = 1090.0_f64;
         let t = 0.1_f64;
         let sigma2 = (t / 2.0).powi(2) * (r * r + r * r) / 108.0;
-        // Σv² over 该 gap 的 filler = n_lost · v²
-        let sv2 = g.n_lost as f64 * g.filler_weight * g.filler_weight;
+        // Σv² 必须用**实际生成的 filler 数**(filled_events.len(),逐 bin round 后可
+        // ≠ n_lost),否则下游按 filled_events 求和时不守恒。
+        let sv2 = g.filled_events.len() as f64 * g.filler_weight * g.filler_weight;
         assert!(
-            (sv2 - sigma2).abs() < sigma2 * 0.05,
-            "Σv²={sv2} 应≈σ²_gap={sigma2}"
+            (sv2 - sigma2).abs() < sigma2 * 0.02,
+            "Σv²(按实际 filler 数)={sv2} 应≈σ²_gap={sigma2}"
+        );
+    }
+
+    /// 守护 k:标定系数必须真进入贡献。target 率=2×ref → k=2 → 每个 in-gap
+    /// 参考事件 contrib = k/n_m = 2。删掉 `*k` 或写反 k 会让此测试变红。
+    #[test]
+    fn weight_uses_calibration_k() {
+        let target = make_box(
+            [spread(0.5, 1.0, 100), spread(1.1, 1.6, 100)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
+        let ref_b = make_box(ref_ev.clone(), vec![]);
+        let (_g, rw) = reconstruct_gaps(&target, &[&ref_b]);
+        for (i, &t) in ref_ev.iter().enumerate() {
+            if (1.0..1.1).contains(&t) {
+                assert!(
+                    (rw[0][i] - 2.0).abs() < 1e-6,
+                    "k=2 时 in-gap 贡献应=2,得 {}",
+                    rw[0][i]
+                );
+            }
+        }
+    }
+
+    /// 守护跨盒路由:只有盒 A(idx0) 有 gap,B/C 作参考。编排后 A 自己不该收到
+    /// 任何贡献(weights[0] 全 1)——若 gj 映射错位、把 B/C 的贡献落到 A 会红。
+    #[test]
+    fn contributions_route_to_correct_box() {
+        let a = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        let ref_ev =
+            || [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
+        let boxes = [a, make_box(ref_ev(), vec![]), make_box(ref_ev(), vec![])];
+
+        let mut weights: Vec<Vec<f64>> =
+            boxes.iter().map(|bx| vec![1.0f64; bx.events.len()]).collect();
+        for i in 0..boxes.len() {
+            let refs_with_idx: Vec<(usize, &BoxReconstructionData)> = boxes
+                .iter()
+                .enumerate()
+                .filter(|&(j, _)| j != i)
+                .map(|(j, d)| (j, d))
+                .collect();
+            let refs: Vec<&BoxReconstructionData> =
+                refs_with_idx.iter().map(|(_, d)| *d).collect();
+            let (_g, rw) = reconstruct_gaps(&boxes[i], &refs);
+            for (r, (gj, _)) in refs_with_idx.iter().enumerate() {
+                for (ev, &cc) in rw[r].iter().enumerate() {
+                    weights[*gj][ev] += cc;
+                }
+            }
+        }
+        assert!(
+            weights[0].iter().all(|&w| (w - 1.0).abs() < 1e-9),
+            "盒 A 不应收到任何贡献,却有 w≠1"
+        );
+        assert!(weights[1].iter().any(|&w| w > 1.0001), "B 应有被参考的事件");
+        assert!(weights[2].iter().any(|&w| w > 1.0001), "C 应有被参考的事件");
+    }
+
+    /// 守护防双计:cross-ref gap 的 filler_weight 必须为 0(方差在参考事件,
+    /// 不能同时挂到 filler)。
+    #[test]
+    fn cross_ref_gap_has_zero_filler_weight() {
+        let target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&make_box(ref_ev, vec![])]);
+        assert!(gaps[0].has_cross_ref, "该 gap 应判为 cross-ref");
+        assert!(gaps[0].filler_weight.abs() < 1e-12, "cross-ref filler_weight 必须为 0");
+    }
+
+    /// Bug:有参考但覆盖<30% 的 gap 走退化路径,不该标 has_cross_ref=true。
+    #[test]
+    fn low_coverage_gap_not_marked_cross_ref() {
+        let mut target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        target.packets = vec![
+            PacketInfo { pkt_idx: 0, min_met: 0.9, max_met: 1.0, n_events: 109 },
+            PacketInfo { pkt_idx: 1, min_met: 1.1, max_met: 1.2, n_events: 109 },
+        ];
+        target.gaps[0].prev_pkt_idx = 0;
+        target.gaps[0].next_pkt_idx = 1;
+        // 参考只在 gap 前 ~20% [1.0,1.02) 有事件 → 覆盖<30% → 退化分支
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.02, 60), spread(1.1, 1.6, 50)].concat();
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&make_box(ref_ev, vec![])]);
+        assert!(
+            !gaps[0].has_cross_ref,
+            "覆盖<30% 的退化 gap 不应标 has_cross_ref=true"
+        );
+    }
+
+    /// Bug:两侧包都无有效率 (None,None) 时用 MCU 地板率造 filler,但方差不应为 0
+    /// (最不确定的纯猜测填充反而零方差、被当精确测量)。
+    #[test]
+    fn no_packet_rate_degenerate_gap_gets_variance() {
+        let mut target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        // 包 span=0 → packet_rate 返回 None → (None,None)
+        target.packets = vec![
+            PacketInfo { pkt_idx: 0, min_met: 1.0, max_met: 1.0, n_events: 1 },
+            PacketInfo { pkt_idx: 1, min_met: 1.0, max_met: 1.0, n_events: 1 },
+        ];
+        target.gaps[0].prev_pkt_idx = 0;
+        target.gaps[0].next_pkt_idx = 1;
+        let refs: Vec<&BoxReconstructionData> = vec![];
+        let (gaps, _rw) = reconstruct_gaps(&target, &refs);
+        assert!(gaps[0].n_lost > 0, "地板率仍会造 filler");
+        assert!(
+            gaps[0].filler_weight > 0.0,
+            "(None,None) 地板填充的 filler 方差不应为 0"
         );
     }
 

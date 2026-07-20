@@ -342,7 +342,13 @@ mod tests {
 
     fn gap0(filled: Vec<f64>) -> ReconstructedGap {
         let n = filled.len();
-        ReconstructedGap { gap_idx: 0, filled_events: filled, n_lost: n, has_cross_ref: true }
+        ReconstructedGap {
+            gap_idx: 0,
+            filled_events: filled,
+            n_lost: n,
+            has_cross_ref: true,
+            filler_weight: 0.0,
+        }
     }
 
     /// [lo, hi) 内均匀铺 n 个等间隔时间戳（升序）。

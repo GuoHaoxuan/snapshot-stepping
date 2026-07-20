@@ -89,7 +89,7 @@ pub fn cmd_report(args: &ReportArgs) -> std::io::Result<()> {
             .filter(|&(j, _)| j != i)
             .map(|(_, (_, d))| d)
             .collect();
-        let (gap_results, _ref_weights, _self_weights) = reconstruct_gaps(&box_data[i].1, &refs);
+        let (gap_results, _ref_weights) = reconstruct_gaps(&box_data[i].1, &refs);
         let n_lost_total: usize = gap_results.iter().map(|r| r.n_lost).sum();
         let n_ref = gap_results.iter().filter(|r| r.has_cross_ref).count();
         let banded = assign_gap_fill_channels(&box_data[i].1, &refs, &gap_results);

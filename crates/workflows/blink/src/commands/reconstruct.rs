@@ -63,7 +63,7 @@ pub fn cmd_reconstruct(
         .collect();
 
     eprintln!("Reconstructing (FIFO reset gaps)...");
-    let mut all_filled: Vec<(String, Vec<(f64, u16, u8)>)> = Vec::new();
+    let mut all_filled: Vec<(String, Vec<(f64, u16, u8, f64)>)> = Vec::new();
     // 逐盒逐观测事件的粒子权重（particle weight），初值 1.0（自己那一份）；
     // 被别的盒 gap 当参考时累加它的贡献 ρ·k/n_m·(1+Λ)。
     let mut weights: Vec<Vec<f64>> =
@@ -79,15 +79,12 @@ pub fn cmd_reconstruct(
         let refs: Vec<&BoxReconstructionData> =
             refs_with_idx.iter().map(|(_, d)| *d).collect();
 
-        let (gap_results, ref_weights, self_w) = reconstruct_gaps(&box_data[i].1, &refs);
-        // 参考贡献累加回各参考盒观测事件；退化 gap 的自身贡献累加回 target 盒
+        let (gap_results, ref_weights) = reconstruct_gaps(&box_data[i].1, &refs);
+        // 参考贡献累加回各参考盒观测事件（退化 gap 的方差改挂 filler、不碰观测事件）
         for (r, (gj, _)) in refs_with_idx.iter().enumerate() {
             for (ev, &c) in ref_weights[r].iter().enumerate() {
                 weights[*gj][ev] += c;
             }
-        }
-        for (ev, &c) in self_w.iter().enumerate() {
-            weights[i][ev] += c;
         }
         let n_gap_filled: usize = gap_results.iter().map(|r| r.n_lost).sum();
         let n_gap_ref = gap_results.iter().filter(|r| r.has_cross_ref).count();
@@ -102,16 +99,17 @@ pub fn cmd_reconstruct(
                 box_data[i].0, n_calib, n_unfill,
             );
         }
-        let mut gap_events: Vec<(f64, u16, u8)> = gap_results
+        let mut gap_events: Vec<(f64, u16, u8, f64)> = gap_results
             .iter()
             .zip(banded.iter())
             .flat_map(|(r, b)| {
+                let fw = r.filler_weight; // 退化 gap 的每-filler 仅方差权重（cross-ref=0）
                 r.filled_events
                     .iter()
                     .copied()
                     .zip(b.channels.iter().copied())
                     .zip(b.pulse_widths.iter().copied())
-                    .map(|((t, c), w)| (t, c, w))
+                    .map(move |((t, c), w)| (t, c, w, fw))
             })
             .collect();
         gap_events.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
@@ -157,13 +155,13 @@ pub fn cmd_reconstruct(
                 n_obs += 1;
             }
         }
-        for &(t, ch, pw) in gap_events {
+        for &(t, ch, pw, fw) in gap_events {
             if t >= met_min && t <= met_max {
-                // filler 是假粒子，权重 0：正常 gap 方差由参考事件承载，退化
-                // gap 方差由 pre/post 包的观测事件承载（见 accumulate_fallback_weights）
+                // filler 是假粒子：cross-ref gap 的 fw=0（方差在参考事件）；
+                // 退化 gap 的 fw>0（该 gap 的 σ² 均摊到自己 filler 上，Σfw²=σ²_gap）
                 println!(
                     "{},FILL_GAP,{:.6},{},{},-1,-1,{:.6}",
-                    box_name, t, unwrap_channel(ch), pw, 0.0
+                    box_name, t, unwrap_channel(ch), pw, fw
                 );
                 n_gap += 1;
             }

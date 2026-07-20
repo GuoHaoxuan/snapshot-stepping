@@ -254,6 +254,10 @@ pub struct ReconstructedGap {
     pub n_lost: usize,
     /// 是否使用了交叉参考
     pub has_cross_ref: bool,
+    /// 每个 filler 的“仅方差”权重 v。cross-ref gap = 0（方差由参考事件承载）；
+    /// 退化 gap = √(σ²_gap / N_lost)，σ²_gap 由 pre/post 包率涨落传播，使方差
+    /// 局域在 gap 内（挂 filler）而非畸变相邻真实事件。
+    pub filler_weight: f64,
 }
 
 const EVENTS_PER_PKT: f64 = 109.0;
@@ -270,7 +274,7 @@ const SHAPE_BIN_WIDTH: f64 = 0.001; // 1ms
 pub fn reconstruct_gaps(
     target: &BoxReconstructionData,
     references: &[&BoxReconstructionData],
-) -> (Vec<ReconstructedGap>, Vec<Vec<f64>>, Vec<f64>) {
+) -> (Vec<ReconstructedGap>, Vec<Vec<f64>>) {
     let mut results = Vec::new();
     // per-reference-box, per-event particle-weight contribution from THIS
     // target's gaps (aligned with `references`); accumulated below.
@@ -278,9 +282,6 @@ pub fn reconstruct_gaps(
         .iter()
         .map(|r| vec![0.0f64; r.events.len()])
         .collect();
-    // target's OWN per-event contribution from its degenerate (fallback) gaps,
-    // where the pre/post packets serve as equivalent-Poisson endpoints.
-    let mut self_weights: Vec<f64> = vec![0.0f64; target.events.len()];
 
     for (gap_idx, gap) in target.gaps.iter().enumerate() {
         let gap_start = gap.start_met;
@@ -366,8 +367,9 @@ pub fn reconstruct_gaps(
             }
         }
 
-        // 步骤二：确定 N_lost
+        // 步骤二：确定 N_lost 与退化 filler 的方差权重
         let n_lost;
+        let filler_weight; // 每 filler 的“仅方差”权重：cross-ref=0，退化=√(σ²/N)
         if has_ref {
             let n_filled = shape.iter().filter(|&&v| v > 0.0).count();
             if n_filled * 100 / n_sbins >= 30 {
@@ -391,25 +393,20 @@ pub fn reconstruct_gaps(
                         }
                     }
                 }
+                filler_weight = 0.0; // 方差由参考事件承载
                 eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  cross-ref  cov={n_filled}/{n_sbins}");
             } else {
                 // 参考覆盖不足：退化为 pre/post 率线性插值
                 fill_shape_fallback(&mut shape, gap, &target.packets);
-                let total_shape: f64 = shape.iter().sum();
-                n_lost = (total_shape * actual_sbin).round() as usize;
-                accumulate_fallback_weights(
-                    &mut self_weights, target, gap, n_sbins, n_lost, total_shape,
-                );
+                n_lost = (shape.iter().sum::<f64>() * actual_sbin).round() as usize;
+                filler_weight = degenerate_filler_weight(&target.packets, gap, gap_dur, n_lost);
                 eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  FALLBACK  cov={n_filled}/{n_sbins}");
             }
         } else {
             // 无参考：pre/post 率线性插值
             fill_shape_fallback(&mut shape, gap, &target.packets);
-            let total_shape: f64 = shape.iter().sum();
-            n_lost = (total_shape * actual_sbin).round() as usize;
-            accumulate_fallback_weights(
-                &mut self_weights, target, gap, n_sbins, n_lost, total_shape,
-            );
+            n_lost = (shape.iter().sum::<f64>() * actual_sbin).round() as usize;
+            filler_weight = degenerate_filler_weight(&target.packets, gap, gap_dur, n_lost);
             eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  NO-REF");
         }
 
@@ -441,67 +438,35 @@ pub fn reconstruct_gaps(
             filled_events,
             n_lost,
             has_cross_ref: has_ref,
+            filler_weight,
         });
     }
 
-    (results, ref_weights, self_weights)
+    (results, ref_weights)
 }
 
-/// 把退化 gap 的 filler 权重归到 target 一个包的观测事件上,均摊 W/n_ev。
-/// 包率 r=109/span 的涨落在分母,等效为该包 n_ev 个泊松单元共同承载。
-fn deposit_packet_weight(
-    self_weights: &mut [f64],
-    target: &BoxReconstructionData,
-    pkt_idx: usize,
-    w_total: f64,
-) {
-    if w_total <= 0.0 {
-        return;
-    }
-    if let Some(pi) = target.packets.iter().find(|p| p.pkt_idx == pkt_idx) {
-        let lo = target.events.partition_point(|&t| t < pi.min_met);
-        let hi = target.events.partition_point(|&t| t <= pi.max_met);
-        let n_ev = hi - lo;
-        if n_ev > 0 {
-            let per = w_total / n_ev as f64;
-            for ev in lo..hi {
-                self_weights[ev] += per;
-            }
-        }
-    }
-}
-
-/// 退化(fallback)gap 的权重:pre/post 包率作为等效端点,把 filler 的贡献
-/// 归回 target 自己 pre/post 包的观测事件。线性插值时两端各承担 Σ(1-t)=Σt
-/// =n_sbins/2；单侧外推时整份归该端。守恒:Σ(self_weights)=n_lost。
-fn accumulate_fallback_weights(
-    self_weights: &mut [f64],
-    target: &BoxReconstructionData,
+/// 退化(fallback)gap 每个 filler 的“仅方差”权重 v = √(σ²_gap / N_lost)。
+/// σ²_gap 由 pre/post 包率的涨落传播:Var(r)=r²/(N−1),N=EVENTS_PER_PKT；
+/// 线性插值时两端各权重 T/2,单侧外推整段一个 r。方差挂在 gap 内的 filler 上
+/// (Σv²=σ²_gap),局域、且不畸变相邻的真实观测事件。
+fn degenerate_filler_weight(
+    packets: &[PacketInfo],
     gap: &SaturationInterval,
-    n_sbins: usize,
+    gap_dur: f64,
     n_lost: usize,
-    total_shape: f64,
-) {
-    if total_shape <= 0.0 || n_lost == 0 {
-        return;
+) -> f64 {
+    if n_lost == 0 {
+        return 0.0;
     }
-    let rho = n_lost as f64 / total_shape;
-    let n = n_sbins as f64;
-    let r_pre = packet_rate(&target.packets, gap.prev_pkt_idx);
-    let r_post = packet_rate(&target.packets, gap.next_pkt_idx);
-    match (r_pre, r_post) {
-        (Some(rp), Some(rn)) => {
-            deposit_packet_weight(self_weights, target, gap.prev_pkt_idx, rho * rp * n / 2.0);
-            deposit_packet_weight(self_weights, target, gap.next_pkt_idx, rho * rn * n / 2.0);
-        }
-        (Some(r), None) => {
-            deposit_packet_weight(self_weights, target, gap.prev_pkt_idx, rho * r * n);
-        }
-        (None, Some(r)) => {
-            deposit_packet_weight(self_weights, target, gap.next_pkt_idx, rho * r * n);
-        }
-        (None, None) => {} // MCU floor：无包源，无法归属（极端退化，罕见）
-    }
+    let dof = (EVENTS_PER_PKT - 1.0).max(1.0);
+    let r_pre = packet_rate(packets, gap.prev_pkt_idx);
+    let r_post = packet_rate(packets, gap.next_pkt_idx);
+    let sigma2 = match (r_pre, r_post) {
+        (Some(rp), Some(rn)) => (gap_dur / 2.0).powi(2) * (rp * rp + rn * rn) / dof,
+        (Some(r), None) | (None, Some(r)) => gap_dur.powi(2) * r * r / dof,
+        (None, None) => 0.0, // MCU floor：无率源，方差无从估（极端退化，罕见）
+    };
+    (sigma2 / n_lost as f64).sqrt()
 }
 
 /// 从包的 span 估算事件率。
@@ -670,7 +635,7 @@ mod weight_tests {
         let ref_c = make_box(ref_events(), vec![]);
         let refs: Vec<&BoxReconstructionData> = vec![&ref_b, &ref_c];
 
-        let (gaps, ref_weights, _sw) = reconstruct_gaps(&target, &refs);
+        let (gaps, ref_weights) = reconstruct_gaps(&target, &refs);
 
         let n_lost_total: usize = gaps.iter().map(|g| g.n_lost).sum();
         let weight_sum: f64 = ref_weights.iter().flatten().sum();
@@ -697,7 +662,7 @@ mod weight_tests {
         let ref_c = make_box(ref_events(), vec![]);
         let refs: Vec<&BoxReconstructionData> = vec![&ref_b, &ref_c];
 
-        let (gaps, ref_weights, _sw) = reconstruct_gaps(&target, &refs);
+        let (gaps, ref_weights) = reconstruct_gaps(&target, &refs);
         let n_lost: usize = gaps.iter().map(|g| g.n_lost).sum();
         let wsum: f64 = ref_weights.iter().flatten().sum();
 
@@ -722,7 +687,7 @@ mod weight_tests {
         let ref_ev =
             [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
         let ref_b = make_box(ref_ev.clone(), vec![]);
-        let (_gaps, rw, _sw) = reconstruct_gaps(&target, &[&ref_b]);
+        let (_gaps, rw) = reconstruct_gaps(&target, &[&ref_b]);
         let w = &rw[0];
 
         for (i, &t) in ref_ev.iter().enumerate() {
@@ -755,7 +720,7 @@ mod weight_tests {
             || [spread(0.5, 1.0, 50), spread(1.0, 1.1, 300), spread(1.1, 1.6, 50)].concat();
         let rb = make_box(ref_ev(), vec![]);
         let rc = make_box(ref_ev(), vec![]);
-        let (_gaps, rw, _sw) = reconstruct_gaps(&target, &[&rb, &rc]);
+        let (_gaps, rw) = reconstruct_gaps(&target, &[&rb, &rc]);
         let ev = ref_ev();
         for (i, &t) in ev.iter().enumerate() {
             if (1.0..1.1).contains(&t) {
@@ -768,10 +733,11 @@ mod weight_tests {
         }
     }
 
-    /// 退化(fallback)守恒:无参考盒 → 用 target 自己 pre/post 包率恢复,
-    /// filler 的方差归到 pre/post 包的观测事件。Σ(self_weights) 必须 == n_lost。
+    /// 退化(fallback):无参考盒 → 用 target 自己 pre/post 包率恢复。退化 gap 的
+    /// 每个 filler 携带仅方差权重 v,Σv² == σ²_gap;方差挂 filler(gap 内)、不碰
+    /// 相邻真实观测事件(ref_weights 全 0)。
     #[test]
-    fn degenerate_gap_self_weight_conserved() {
+    fn degenerate_gap_filler_weight_conserved() {
         // target 有 pre 包 [0.9,1.0)、post 包 [1.1,1.2),中间 gap [1.0,1.1)
         let events = [spread(0.9, 1.0, 109), spread(1.1, 1.2, 109)].concat();
         let mut target = make_box(events, vec![si(1.0, 1.1)]);
@@ -784,14 +750,20 @@ mod weight_tests {
 
         // 无参考盒 → NO-REF fallback
         let refs: Vec<&BoxReconstructionData> = vec![];
-        let (gaps, _rw, self_w) = reconstruct_gaps(&target, &refs);
+        let (gaps, _rw) = reconstruct_gaps(&target, &refs);
+        let g = &gaps[0];
+        assert!(g.n_lost > 0, "退化 gap 应产生 filler");
+        assert!(g.filler_weight > 0.0, "退化 gap 的 filler 应带正方差权重");
 
-        let n_lost: usize = gaps.iter().map(|g| g.n_lost).sum();
-        let sw_sum: f64 = self_w.iter().sum();
-        assert!(n_lost > 0, "退化 gap 应产生 filler");
+        // σ²_gap = (T/2)²(r_pre²+r_post²)/(N-1)，r=109/0.1=1090，T=0.1，N-1=108
+        let r = 1090.0_f64;
+        let t = 0.1_f64;
+        let sigma2 = (t / 2.0).powi(2) * (r * r + r * r) / 108.0;
+        // Σv² over 该 gap 的 filler = n_lost · v²
+        let sv2 = g.n_lost as f64 * g.filler_weight * g.filler_weight;
         assert!(
-            (sw_sum - n_lost as f64).abs() < 1.0,
-            "退化自身权重 Σ={sw_sum} 应=n_lost={n_lost}"
+            (sv2 - sigma2).abs() < sigma2 * 0.05,
+            "Σv²={sv2} 应≈σ²_gap={sigma2}"
         );
     }
 
@@ -829,7 +801,7 @@ mod weight_tests {
                 .collect();
             let refs: Vec<&BoxReconstructionData> =
                 refs_with_idx.iter().map(|(_, d)| *d).collect();
-            let (gaps, ref_w, _sw) = reconstruct_gaps(&boxes[i], &refs);
+            let (gaps, ref_w) = reconstruct_gaps(&boxes[i], &refs);
             total_fill += gaps.iter().map(|g| g.n_lost).sum::<usize>();
             for (r, (gj, _)) in refs_with_idx.iter().enumerate() {
                 for (ev, &c) in ref_w[r].iter().enumerate() {

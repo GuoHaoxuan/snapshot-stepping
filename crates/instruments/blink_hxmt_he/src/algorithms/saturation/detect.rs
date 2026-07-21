@@ -374,17 +374,23 @@ pub fn reconstruct_gaps(
 
         // 汇总所有参考 box 的事件，统一构建形状函数
         let mut has_ref = false;
+        // M1:每格『可用(可信)参考盒数』——形状/权重/n_m 的正确分母。饱和(is_in_unreliable
+        // 被排除)才不算可用;可信但该格 count=0 的盒仍算可用(0 计数入分子、+1 入分母)。
+        // 『饱和』与『count=0』是两件事,不能都从分母踢掉。
+        let mut avail = vec![0usize; n_sbins];
         for si in 0..n_sbins {
             let bin_lo = gap_start + si as f64 * actual_sbin;
             let bin_hi = bin_lo + actual_sbin;
             let bin_mid = (bin_lo + bin_hi) / 2.0;
 
             let mut total_ref_count = 0.0;
+            let mut n_avail = 0usize;
 
             for (ref_idx, ref_data) in references.iter().enumerate() {
                 if is_in_unreliable(bin_mid, &ref_data.unreliable) {
                     continue;
                 }
+                n_avail += 1;
 
                 let lo_idx = ref_data.events.partition_point(|&t| t < bin_lo);
                 let hi_idx = ref_data.events.partition_point(|&t| t < bin_hi);
@@ -401,10 +407,12 @@ pub fn reconstruct_gaps(
                 }
             }
 
-            let n_valid_refs = bin_refs[si].len();
-            if n_valid_refs > 0 {
-                shape[si] = total_ref_count / n_valid_refs as f64;
-                has_ref = true;
+            avail[si] = n_avail;
+            if n_avail > 0 {
+                shape[si] = total_ref_count / n_avail as f64;
+                if shape[si] > 0.0 {
+                    has_ref = true;
+                }
             }
         }
 
@@ -453,18 +461,18 @@ pub fn reconstruct_gaps(
             let n_filled = shape.iter().filter(|&&v| v > 0.0).count();
             if n_filled * 100 / n_sbins >= 30 {
                 // 参考覆盖充分：用 shape 总和作为 N_lost
-                let (lambda, interp) = interpolate_empty_bins(&mut shape);
+                let (lambda, interp) = interpolate_empty_bins(&mut shape, &avail);
                 let total: f64 = shape.iter().sum();
                 n_lost = total.round() as usize;
                 // 逐参考事件累加权重贡献 w_contrib = ρ · k/n_m · (1+Λ)。
                 // 每个 filler 都完整归回它的源参考事件（守恒：Σ contrib = n_lost）。
                 let rho = if total > 0.0 { n_lost as f64 / total } else { 0.0 };
                 for (si2, refs_in_bin) in bin_refs.iter().enumerate() {
-                    let n_valid = refs_in_bin.len();
-                    if n_valid == 0 {
+                    if refs_in_bin.is_empty() {
                         continue;
                     }
-                    let amp = rho * (1.0 + lambda[si2]) / n_valid as f64;
+                    // 分母用可用盒数(M1),不是非零盒数
+                    let amp = rho * (1.0 + lambda[si2]) / avail[si2] as f64;
                     for &(ref_idx, lo, hi, k) in refs_in_bin {
                         let contrib = amp * k;
                         for ev in lo..hi {
@@ -482,7 +490,7 @@ pub fn reconstruct_gaps(
                             None => GapBinInfo {
                                 bin_index: si2,
                                 t_lo,
-                                n_m: bin_refs[si2].len(),
+                                n_m: avail[si2],
                                 kind: GapBinKind::Measured,
                                 left_bin: None,
                                 right_bin: None,
@@ -1087,6 +1095,34 @@ mod weight_tests {
         );
     }
 
+    /// M1:形状分母必须是『该格可用(可信)参考盒数』,不是『该格非零盒数』——饱和(被
+    /// 排除)和 count=0(可信但泊松涨落到 0)是两回事。两盒都可信,B 只在偶数 1ms 格、
+    /// C 只在奇数格各 1 事件(错开)→ 每格 1 非零、2 可用。真率=1/2=0.5/格 → n_lost≈10;
+    /// bug(÷非零盒=1)给 shape=1、n_lost≈20。标定窗 ±0.5s 内 target 与两 ref 同率 → k=1。
+    #[test]
+    fn shape_divides_by_available_boxes_not_nonzero() {
+        let calib: Vec<f64> = [spread(0.5, 1.0, 500), spread(1.02, 1.52, 500)].concat();
+        let target = make_box(calib.clone(), vec![si(1.0, 1.02)]); // gap [1.0,1.02)=20 格
+        let mut b = calib.clone();
+        for i in (0..20).step_by(2) {
+            b.push(1.0 + (i as f64 + 0.5) * 0.001); // 偶数格
+        }
+        b.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let mut c = calib.clone();
+        for i in (1..20).step_by(2) {
+            c.push(1.0 + (i as f64 + 0.5) * 0.001); // 奇数格
+        }
+        c.sort_by(|x, y| x.partial_cmp(y).unwrap());
+        let (gaps, _) =
+            reconstruct_gaps(&target, &[&make_box(b, vec![]), &make_box(c, vec![])]);
+        assert_eq!(gaps.len(), 1);
+        assert!(
+            (gaps[0].n_lost as f64 - 10.0).abs() <= 1.5,
+            "n_lost={} 应≈10(÷可用盒数);bug 会给≈20",
+            gaps[0].n_lost
+        );
+    }
+
     /// 评审②:率的分子必须是该 packet 的**实际事例数**,不是名义 109。
     /// 残包(reset 前后常见)只有 50 个事例、span=1s → 率=50/s 而非 109/s。
     #[test]
@@ -1171,7 +1207,8 @@ mod weight_tests {
     #[test]
     fn interp_reports_endpoints_and_tau() {
         let mut shape = vec![10.0, 0.0, 0.0, 20.0];
-        let (_lambda, interp) = interpolate_empty_bins(&mut shape);
+        let avail = vec![0usize; shape.len()]; // 无可用参考 → 全按真 empty 插值
+        let (_lambda, interp) = interpolate_empty_bins(&mut shape, &avail);
         assert!(interp[0].is_none(), "measured 格 interp 应为 None");
         assert!(interp[3].is_none(), "measured 格 interp 应为 None");
         let (l1, r1, t1) = interp[1].unwrap();
@@ -1188,7 +1225,8 @@ mod weight_tests {
     fn interp_extrapolation_endpoints() {
         // bin0 左空(None,Some(1)) → 右外推;bin2 右空(Some(1),None) → 左外推
         let mut shape = vec![0.0, 5.0, 0.0];
-        let (_lambda, interp) = interpolate_empty_bins(&mut shape);
+        let avail = vec![0usize; shape.len()];
+        let (_lambda, interp) = interpolate_empty_bins(&mut shape, &avail);
         assert_eq!(interp[0].map(|(l, r, t)| (l, r, t)), Some((1, 1, 1.0)));
         assert_eq!(interp[2].map(|(l, r, t)| (l, r, t)), Some((1, 1, 0.0)));
     }
@@ -1237,14 +1275,16 @@ mod weight_tests {
             [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
             vec![si(1.0, 1.1)],
         );
-        // 参考只在 gap 前半 [1.0,1.05) 有事件(覆盖~50%≥30% → cross-ref),后半空
+        // 参考前半 [1.0,1.05) 有事件、可用;后半 [1.05,1.1) **饱和(unreliable)** → 后半
+        // 无可用参考 → 共饱和 empty(真 empty)。注:参考『可用但 count=0』是真 0、不算 empty。
         let ref_ev =
             [spread(0.5, 1.0, 50), spread(1.0, 1.05, 300), spread(1.1, 1.6, 50)].concat();
-        let (gaps, _rw) = reconstruct_gaps(&target, &[&make_box(ref_ev, vec![])]);
+        let (gaps, _rw) =
+            reconstruct_gaps(&target, &[&make_box(ref_ev, vec![si(1.05, 1.1)])]);
         let g = &gaps[0];
         assert!(g.has_cross_ref, "覆盖≥30% 应判 cross-ref");
         let n_empty = g.bins.iter().filter(|b| b.kind == GapBinKind::Empty).count();
-        assert!(n_empty > 0, "后半应出现空格");
+        assert!(n_empty > 0, "后半参考饱和 → 应出现共饱和空格");
         for b in g.bins.iter().filter(|b| b.kind == GapBinKind::Empty) {
             assert!(
                 b.left_bin.is_some() && b.right_bin.is_some() && b.tau.is_some(),
@@ -1348,6 +1388,7 @@ mod weight_tests {
 /// 则整份 1。用于把插值 bin 的 filler 权重反算回端点的参考事件。
 fn interpolate_empty_bins(
     shape: &mut [f64],
+    avail: &[usize],
 ) -> (Vec<f64>, Vec<Option<(usize, usize, f64)>>) {
     let n = shape.len();
     let mut lambda = vec![0.0f64; n];
@@ -1379,7 +1420,8 @@ fn interpolate_empty_bins(
     }
 
     for i in 0..n {
-        if shape[i] > 0.0 {
+        // 只插『真 empty』(无可用参考=共饱和);真 0(有可用参考、恰好 count=0)保持 0、不插。
+        if shape[i] > 0.0 || avail[i] > 0 {
             continue;
         }
         match (left_filled[i], right_filled[i]) {

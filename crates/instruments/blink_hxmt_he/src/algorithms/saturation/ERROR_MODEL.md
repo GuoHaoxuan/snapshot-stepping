@@ -284,8 +284,13 @@ $\approx|r_{\rm post}-r_{\rm pre}|/(r_{\rm pre}+r_{\rm post})$（下界启发式
 ## 12. 验证实验清单（确定性注入，证明数值上没漏）
 
 误差枚举再全也要闭环验证。全部**确定性**（无 MC，§10）：
-1. **掩掉-重建注入**（主）：取未饱和已知亮暴，**确定性**掩掉 target 盒，重建后逐 bin 比真值
-   （时域 + $F\,\mathrm{Cov}\,F^\top$ 频域）。**唯一直接量化 $U$（$\lambda_U=1$ 腿）与退化外推 bias 的实验。**
+1. **掩掉-重建注入**（主）：取未饱和已知亮暴，**确定性**掩掉 target 盒，重建后逐 bin 比真值（时域）。
+   已量化：$U$（$\lambda_U=1$ 腿）+ **cross-ref measured 腿** + **共饱和 empty 腿**（`cosaturate`：把
+   参考盒也标 unreliable，造真机制 empty）。实测 250919A 平坦 baseline（138 gap）：measured
+   pull.std=1.06、共饱和 empty 0.998、bias~0.1%，可从仓库复现（`scripts/injection_validation.sh`）。
+   ⚠**未覆盖：degenerate（pre/post 外推）腿。** `cosaturate` 造的是 cross-ref empty，不是真退化
+   （需 $\mathrm{has\_ref}$=false 的全宽共饱和），故退化 r 项与其外推 bias **尚未被真值验证**；
+   补验前须先修 `inject` 的 `prev/next_pkt_idx=0` 硬编码（否则退化注入用文件首包率）。
    记忆铁律：**验证只用 250919A**（211211A 已弃用：峰上 59% 三盒共饱和退化、SPI-ACS 拿不到）。
 2. **解析协方差自洽**：$S\,\mathrm{diag}(C)\,S^\top$ 行-盒求和应逐位等于逐粒子 $\sum w^2 C$；
    pull 分布（注入残差 / 解析 σ）均值 0、宽度 1（旧方案 1.32，本 spec 目标 →1）。

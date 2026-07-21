@@ -30,12 +30,12 @@ def load_truth(path: str) -> dict:
 
 
 def gap_pulls(events, blocks, bins, truth, box, include_u=True):
-    """逐 cross-ref gap 的 (gap_id, truth, fill, sigma, pull)。σ 覆盖整个 gap 单 bin，
-    由 cov_matrix 从三表解析算。退化 gap（无 cross-ref）与无真值/零方差的 gap 跳过。"""
+    """逐 gap 的 (gap_id, truth, fill, sigma, pull)。σ 覆盖整个 gap 单 bin，由
+    cov_matrix 从三表解析算：cross-ref 用 S·diag(C)·Sᵀ+k 项，degenerate（全宽共饱和、
+    无有效参考）用 r 项秩-2 斜坡。无真值、或零方差（maskable 退化：只有 MCU 地板率、
+    无从估方差）的 gap 跳过。"""
     rows = []
     for blk in blocks:
-        if blk["type"] != "crossref":
-            continue
         gid = blk["gap_id"]
         if gid not in truth:
             continue

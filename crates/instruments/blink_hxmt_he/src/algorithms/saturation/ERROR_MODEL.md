@@ -285,12 +285,17 @@ $\approx|r_{\rm post}-r_{\rm pre}|/(r_{\rm pre}+r_{\rm post})$（下界启发式
 
 误差枚举再全也要闭环验证。全部**确定性**（无 MC，§10）：
 1. **掩掉-重建注入**（主）：取未饱和已知亮暴，**确定性**掩掉 target 盒，重建后逐 bin 比真值（时域）。
-   已量化：$U$（$\lambda_U=1$ 腿）+ **cross-ref measured 腿** + **共饱和 empty 腿**（`cosaturate`：把
-   参考盒也标 unreliable，造真机制 empty）。实测 250919A 平坦 baseline（138 gap）：measured
-   pull.std=1.06、共饱和 empty 0.998、bias~0.1%，可从仓库复现（`scripts/injection_validation.sh`）。
-   ⚠**未覆盖：degenerate（pre/post 外推）腿。** `cosaturate` 造的是 cross-ref empty，不是真退化
-   （需 $\mathrm{has\_ref}$=false 的全宽共饱和），故退化 r 项与其外推 bias **尚未被真值验证**；
-   补验前须先修 `inject` 的 `prev/next_pkt_idx=0` 硬编码（否则退化注入用文件首包率）。
+   **三条腿全部真值验证**，实测 250919A 平坦 baseline（各 138 gap），可从仓库复现
+   （`scripts/injection_validation.sh [--cosat|--degenerate]`）：
+   - **cross-ref measured 腿**：pull.std=1.06、bias −0.27%。
+   - **共饱和 empty 腿**（`--cosat`：参考盒 gap 中段也标 unreliable → 真机制 empty）：1.01、bias −0.00%。
+   - **degenerate 退化腿**（`--degenerate`：全宽共饱和 → 无参考 → 端点率 ramp 外推、r 项秩-2 σ）：
+     1.01、bias +0.37%。此腿依赖 `inject` 填**真实相邻包** `prev/next_pkt_idx`（M4，曾硬编码 0 →
+     取文件首包率；边缘无相邻包 → `usize::MAX` 哨兵 → maskable）。
+     **注意**：平 baseline 端点率≈gap 内率，故此腿验证的是**统计 σ（r 项率涨落传播）**；峰上率剧变时的
+     **外推 bias** 是退化重建的固有局限（信息不足、只有端点），由 `sys_bias_scale`（评审④）标注，
+     本注入覆盖不到。
+   $U$（$\lambda_U=1$ 腿）随三腿一并经 `include_u` 验证。
    记忆铁律：**验证只用 250919A**（211211A 已弃用：峰上 59% 三盒共饱和退化、SPI-ACS 拿不到）。
 2. **解析协方差自洽**：$S\,\mathrm{diag}(C)\,S^\top$ 行-盒求和应逐位等于逐粒子 $\sum w^2 C$；
    pull 分布（注入残差 / 解析 σ）均值 0、宽度 1（旧方案 1.32，本 spec 目标 →1）。

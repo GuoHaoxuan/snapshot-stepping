@@ -13,7 +13,7 @@ use blink_hxmt_he::algorithms::saturation::{
     assign_gap_fill_channels, detect_fifo_reset_intervals, detect_unreliable_intervals,
     extract_packet_infos, reconstruct_gaps, reconstruct_met_channels,
     reconstruct_met_pulse_widths, reconstruct_met_times, reconstruct_with_wrap_tracking,
-    unwrap_channel, BoxReconstructionData, SaturationInterval, SaturationType,
+    unwrap_channel, BoxReconstructionData, PacketInfo, SaturationInterval, SaturationType,
     UnreliableInterval, CHANNEL_SEC,
 };
 use blink_hxmt_he::io::level_1b::SciFile;
@@ -84,13 +84,32 @@ pub fn inject_gaps(
 ) -> (BoxReconstructionData, Vec<Vec<(f64, u16, u8)>>) {
     let gaps: Vec<SaturationInterval> = intervals
         .iter()
-        .map(|&(s, e)| SaturationInterval {
-            start_met: s,
-            stop_met: e,
-            gap_seconds: e - s,
-            prev_pkt_idx: 0,
-            next_pkt_idx: 0,
-            saturation_type: SaturationType::FifoReset,
+        .map(|&(s, e)| {
+            // 退化重建靠 gap 前后**紧邻的真实包**外推端点率（`packet_rate_and_n`
+            // 按 `pkt_idx` 字段查找，非数组下标）。填真实相邻包序号：gap 起点前
+            // 最后一个包（`max_met ≤ s`）/ 终点后第一个包（`min_met ≥ e`）；边缘
+            // 无相邻包 → `usize::MAX` 哨兵（find 失败 → None → maskable，绝不
+            // 误落回文件首包 pkt_idx 0）。cross-ref 腿不读这两个字段。
+            let prev_pkt_idx = target
+                .packets
+                .iter()
+                .filter(|p| p.max_met <= s)
+                .max_by(|a, b| a.max_met.partial_cmp(&b.max_met).unwrap())
+                .map_or(usize::MAX, |p| p.pkt_idx);
+            let next_pkt_idx = target
+                .packets
+                .iter()
+                .filter(|p| p.min_met >= e)
+                .min_by(|a, b| a.min_met.partial_cmp(&b.min_met).unwrap())
+                .map_or(usize::MAX, |p| p.pkt_idx);
+            SaturationInterval {
+                start_met: s,
+                stop_met: e,
+                gap_seconds: e - s,
+                prev_pkt_idx,
+                next_pkt_idx,
+                saturation_type: SaturationType::FifoReset,
+            }
         })
         .collect();
 
@@ -446,6 +465,62 @@ mod tests {
         assert!(in_any_gap(1.05, &g));
         assert!(!in_any_gap(1.1, &g), "stop exclusive");
         assert!(!in_any_gap(0.9, &g));
+    }
+
+    /// target with a packet before the gap, one straddling it, one after.
+    /// packets sorted by min_met (extract_packet_infos invariant); pkt_idx is
+    /// the ORIGINAL packet serial (find-by-field), deliberately not the array
+    /// index, so the fix can't accidentally pass by using the position.
+    fn synth_with_packets() -> BoxReconstructionData {
+        BoxReconstructionData {
+            events: vec![0.5, 1.02, 1.05, 1.08, 1.5],
+            channels: vec![10, 20, 30, 40, 50],
+            pulse_widths: vec![60; 5],
+            gaps: Vec::new(),
+            packets: vec![
+                PacketInfo { pkt_idx: 7, min_met: 0.0, max_met: 0.9, n_events: 40 }, // before gap
+                PacketInfo { pkt_idx: 5, min_met: 1.0, max_met: 1.1, n_events: 3 },  // inside gap
+                PacketInfo { pkt_idx: 3, min_met: 1.2, max_met: 2.0, n_events: 55 }, // after gap
+            ],
+            packet_events: Vec::new(),
+            unreliable: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn inject_fills_real_neighbor_packet_indices() {
+        // Degenerate reconstruction reads r_pre/r_post via packet_rate_and_n,
+        // which finds packets by pkt_idx. Injected gaps must carry the real
+        // neighbor packet serials, NOT the hardcoded 0 (that pointed at the
+        // file's first packet → wrong endpoint rates → wrong degenerate σ).
+        let (inj, _truth) = inject_gaps(&synth_with_packets(), &[(1.0, 1.1)]);
+        assert_eq!(inj.gaps.len(), 1);
+        // last packet fully before the gap start (max_met 0.9 <= 1.0) = pkt_idx 7,
+        // NOT the in-gap packet (pkt_idx 5) and NOT hardcoded 0.
+        assert_eq!(inj.gaps[0].prev_pkt_idx, 7, "prev = last packet before gap start");
+        // first packet fully after the gap stop (min_met 1.2 >= 1.1) = pkt_idx 3.
+        assert_eq!(inj.gaps[0].next_pkt_idx, 3, "next = first packet after gap stop");
+    }
+
+    #[test]
+    fn inject_missing_neighbor_uses_sentinel_not_zero() {
+        // Only packet sits AFTER the gap and happens to be pkt_idx 0. With the
+        // old hardcoded 0, the missing prev neighbor would silently resolve to
+        // this real packet (min_met 4.0) → bogus r_pre. The sentinel usize::MAX
+        // makes packet_rate_and_n return None → maskable, the honest outcome.
+        let target = BoxReconstructionData {
+            events: vec![5.0],
+            channels: vec![10],
+            pulse_widths: vec![60],
+            gaps: Vec::new(),
+            packets: vec![PacketInfo { pkt_idx: 0, min_met: 4.0, max_met: 6.0, n_events: 50 }],
+            packet_events: Vec::new(),
+            unreliable: Vec::new(),
+        };
+        let (inj, _truth) = inject_gaps(&target, &[(1.0, 1.1)]);
+        assert_ne!(inj.gaps[0].prev_pkt_idx, 0, "no prev packet must not fall back to real pkt_idx 0");
+        assert_eq!(inj.gaps[0].prev_pkt_idx, usize::MAX, "no neighbor → sentinel usize::MAX");
+        assert_eq!(inj.gaps[0].next_pkt_idx, 0, "first packet after gap = pkt_idx 0");
     }
 
     #[test]

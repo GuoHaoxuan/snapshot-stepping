@@ -181,6 +181,63 @@ def test_total_diag_matches_particlewise_sum_w2c_multibin():
         assert np.isclose(Cov[i, i], exp, rtol=1e-6), (i, Cov[i, i], exp)
 
 
+def test_non_integer_ms_gap_keeps_all_cells():
+    """M2:gap_dur 非 1ms 整数倍(2.5ms → 3 个 Rust 格,actual_sbin=0.833ms)。
+    固定 1ms 网格只有 n_fine=round(2.5)=2 格 → 第 3 格(及其右边界源事件)被丢/round 碰撞。
+    并集网格(跟 Rust 格边界)应保留全部 3 格。单参考 B、k=1、ρ=1、n_m=1 → 每格 w=2、
+    总光变对角 = Σ_格 w²·C_B = 3·(4·1) = 12(当前 bug 只算 2 格 = 8)。"""
+    dt = 0.0025 / 3.0  # Rust actual_sbin
+    # 每个 Rust 格中心放 1 个 B EVT + 1 个 A filler;第 3 格中心 ~0.00208 在固定网格外
+    centers = [0.5 * dt, 1.5 * dt, 2.5 * dt]
+    recs = []
+    for t in centers:
+        recs.append(("B", "EVT", t, 50))
+        recs.append(("A", "FILL_GAP", t, 50))
+    ev = _events(recs)
+    blk = _crossref_block(0, "A", 0.0, 0.0025, ["B"], [1.0], rho=1.0)
+    bins = {0: {i: {"t_lo": i * dt, "n_m": 1, "kind": "measured",
+                    "left_bin": None, "right_bin": None, "tau": None}
+                for i in range(3)}}
+    edges = np.array([0.0, 0.0025])  # 整段单 bin
+    _N, Cov = R.cov_matrix(ev, [blk], bins, edges, box=None, include_u=False)
+    assert np.isclose(Cov[0, 0], 12.0, rtol=1e-6), (Cov[0, 0], "应=12(3格),bug给8(2格)")
+
+
+def test_gap_straddling_analysis_bin_edge_splits():
+    """M2:gap 跨分析 bin 边界 → 跨界的 Rust 格被切两半,各归各的分析 bin、用各自源计数。
+    3 个 1ms Rust 格,分析边界 0.002 从中间格 [0.0015,0.0025) 切过。单参考 B、k=1、ρ=1、
+    n_m=1 → 每源 w=2、var=4·C。B 每半格 1 个 → bin0=cell0+cell1前半=2源、bin1=cell1后半
+    +cell2=2源 → Cov[0,0]=Cov[1,1]=8、Cov[0,1]=0(不同 B 事件,无共享源)。"""
+    recs = [("B", "EVT", t, 50) for t in (0.001, 0.0018, 0.0022, 0.003)]
+    ev = _events(recs)
+    blk = _crossref_block(0, "A", 0.0005, 0.0035, ["B"], [1.0], rho=1.0)
+    bins = {0: {i: {"t_lo": 0.0005 + i * 0.001, "n_m": 1, "kind": "measured",
+                    "left_bin": None, "right_bin": None, "tau": None}
+                for i in range(3)}}
+    edges = np.array([0.0, 0.002, 0.005])  # 0.002 切中间 Rust 格
+    _N, Cov = R.cov_matrix(ev, [blk], bins, edges, box=None, include_u=False)
+    assert np.isclose(Cov[0, 0], 8.0, rtol=1e-6), Cov[0, 0]
+    assert np.isclose(Cov[1, 1], 8.0, rtol=1e-6), Cov[1, 1]
+    assert np.isclose(Cov[0, 1], 0.0, atol=1e-9), Cov[0, 1]
+
+
+def test_true_zero_measured_cell_python():
+    """审查锁(M1-fix#3):真0 measured 格(n_m>0、该格源 C=0,非共饱和)在装配里被乘0
+    → 方差恰0、无跨盒泄漏、均值0。gap 3 格,中间格 B 无事件(真0)、两侧有。"""
+    recs = [("B", "EVT", 0.0005, 50), ("B", "EVT", 0.0025, 50)]  # cell0/cell2 有,cell1 真0
+    ev = _events(recs)
+    blk = _crossref_block(0, "A", 0.0, 0.003, ["B"], [1.0], rho=1.0)
+    bins = {0: {i: {"t_lo": i * 0.001, "n_m": 1, "kind": "measured",  # 全 measured(含真0格1)
+                    "left_bin": None, "right_bin": None, "tau": None}
+                for i in range(3)}}
+    edges = np.array([0.0, 0.001, 0.002, 0.003])  # 逐格
+    _N, Cov = R.cov_matrix(ev, [blk], bins, edges, box=None, include_u=False)
+    assert np.isclose(Cov[1, 1], 0.0, atol=1e-9), ("真0格方差应=0", Cov[1, 1])
+    assert np.isclose(Cov[0, 0], 4.0, rtol=1e-6)
+    assert np.isclose(Cov[2, 2], 4.0, rtol=1e-6)
+    assert np.isclose(Cov[0, 1], 0.0, atol=1e-9)  # 无跨格泄漏
+
+
 # ────────────────── ② filler↔参考跨盒非对角 ──────────────────
 
 def test_cross_box_offdiagonal_sign_and_size():

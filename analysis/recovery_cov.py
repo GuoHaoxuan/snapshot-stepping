@@ -190,6 +190,7 @@ class FineCov:
     fine_dt: float
     t0: float
     C: np.ndarray
+    fine_edges: np.ndarray  # 并集网格边界(非均匀);cov_matrix 的聚合 P 必须用它
 
     def cell(self, box: str, fine_bin: int) -> int:
         return self.box_pos[box] * self.n_fine + fine_bin
@@ -217,9 +218,30 @@ def assemble_fine(events, blocks, bins, bin_edges, box=None, chan_range=None,
     edges = np.asarray(bin_edges, dtype=float)
     t0 = float(edges[0])
     t1 = float(edges[-1])
-    n_fine = max(int(round((t1 - t0) / fine_dt)), 1)
-    fine_edges = t0 + np.arange(n_fine + 1) * fine_dt
+    tol = fine_dt * 1e-6
+
+    # ── 并集细网格 = 分析 bin 边界 ∪ 每 cross-ref gap 的 Rust 格边界 ∪ 退化 gap 的 1ms 细分 ──
+    # M2:每个细格既落唯一分析 bin(聚合 P 干净 0/1)、又落唯一 Rust 格(源计数按 Rust 格分箱)。
+    # gap 跨分析边界时 Rust 格被切:measured 逐子格用各自源计数、empty 按宽度分摊。全程 Python。
+    # 不 round(避免全精度 t_lo 查 round 过的边界产生碰撞);用容差去重。
+    sel_blocks = [b for b in blocks if box is None or b["target_box"] == box]
+    ev_edges = list(edges)  # 分析 bin 边界
+    for b in sel_blocks:
+        gb = bins.get(b["gap_id"])
+        if gb:  # cross-ref:Rust 格边界(t_lo)+ 末边界 t_stop
+            ev_edges.extend(row["t_lo"] for row in gb.values())
+            ev_edges.append(b["t_stop"])
+        else:   # 退化 gap:1ms 细分(r 项秩-2 斜坡需分辨率)
+            nsd = max(int(round((b["t_stop"] - b["t_start"]) / fine_dt)), 1)
+            ev_edges.extend(b["t_start"] + i * fine_dt for i in range(nsd + 1))
+    ev_edges = np.array(sorted(x for x in ev_edges if t0 - tol <= x <= t1 + tol))
+    if len(ev_edges) >= 2:
+        fine_edges = ev_edges[np.concatenate(([True], np.diff(ev_edges) > tol))]
+    if len(ev_edges) < 2 or len(fine_edges) < 2:
+        fine_edges = np.array([t0, t1])
+    n_fine = len(fine_edges) - 1
     fine_centers = 0.5 * (fine_edges[:-1] + fine_edges[1:])
+    fine_widths = np.diff(fine_edges)
 
     # 盒集合:事件流出现的盒 ∪ 块表 target/参考盒(target 盒可能全饱和无事件)。
     box_set = set(events["box"].tolist())
@@ -235,7 +257,13 @@ def assemble_fine(events, blocks, bins, bin_edges, box=None, chan_range=None,
         return bp * n_fine + fi
 
     def fine_of(t):
-        return int(round((t - t0) / fine_dt))
+        # 并集网格上定位(+tol 让恰在边上的 t_lo 落到以它为左边界的格,不碰撞)
+        i = int(np.searchsorted(fine_edges, t + tol, side="right")) - 1
+        return min(max(i, 0), n_fine - 1)
+
+    def fine_range(a, b):
+        """Rust 格 [a,b) 覆盖的细格(中心落其中);gap 跨分析边界时 Rust 格被切成多个子格。"""
+        return [fi for fi in range(n_fine) if a - tol <= fine_centers[fi] < b - tol]
 
     # ── 源计数 C_{b,i}(观测 EVT,能段过滤)──
     met = events["met"]
@@ -287,59 +315,73 @@ def assemble_fine(events, blocks, bins, bin_edges, box=None, chan_range=None,
             crefs = blk.get("c_ref_cal") or [None] * len(ref_names)
             ca = blk.get("c_a_cal")
             gb = bins.get(gid)
-            if gb is None:  # 无格结构表:退化为整段 measured-uniform(n_m=参考数)
-                gb = {fi - fine_of(blk["t_start"]): {
-                    "t_lo": fine_edges[fi], "n_m": len(ref_names),
-                    "kind": "measured", "left_bin": None,
-                    "right_bin": None, "tau": None}
-                    for fi in range(fine_of(blk["t_start"]),
-                                    fine_of(blk["t_stop"]))
-                    if 0 <= fi < n_fine}
-            # 逐格 fine 索引 / n_m
-            fine_of_bi = {bi: fine_of(row["t_lo"]) for bi, row in gb.items()}
-            nm_of_bi = {bi: row["n_m"] for bi, row in gb.items()}
+            if gb is None:  # 无格结构表(罕见):整段一个 measured 格,n_m=参考数
+                gb = {0: {"t_lo": blk["t_start"], "n_m": len(ref_names),
+                          "kind": "measured", "left_bin": None,
+                          "right_bin": None, "tau": None}}
+            # Rust 格按 bin_index 排序;各自区间 [t_lo, t_hi)(t_hi=下一格 t_lo 或 gap t_stop)
+            items = sorted(gb.items())
+            t_lo_of = {bi: row["t_lo"] for bi, row in items}
+            n_m_of = {bi: row["n_m"] for bi, row in items}
 
-            # 每格产生:S 系数 + g 向量(k项 Jacobian 行)
+            def t_hi_at(kk, _items=items, _tstop=blk["t_stop"], _tlo=t_lo_of):
+                return _tlo[_items[kk + 1][0]] if kk + 1 < len(_items) else _tstop
+
+            def rep_fine(bi, _items=items, _tlo=t_lo_of):
+                # 端点 Rust 格的代表细格(格中心所在细格)
+                if bi is None or bi not in _tlo:
+                    return None
+                kk = next(i for i, (b2, _) in enumerate(_items) if b2 == bi)
+                return fine_of(0.5 * (_tlo[bi] + t_hi_at(kk)))
+
             rows_local = []  # (target_cell, g_vec over ref index)
             M = len(ref_names)
-            for bi, row in gb.items():
-                fi = fine_of_bi[bi]
-                if not (0 <= fi < n_fine):
+            for kk, (bi, row) in enumerate(items):
+                lo, hi = t_lo_of[bi], t_hi_at(kk)
+                fis = fine_range(lo, hi)  # 通常 1 个;gap 跨分析边界 → 多个子格
+                if not fis:
                     continue
-                tc = cell(tbp, fi)
-                gap_cells.add(tc)
-                gvec = np.zeros(M)
+                w_rust = max(hi - lo, tol)
                 if row["kind"] == "measured":
                     nm = row["n_m"]
                     if not nm or nm <= 0:
                         continue
-                    for m, (rb, kb) in enumerate(zip(ref_names, ks)):
-                        if rb not in box_pos:
-                            continue
-                        rbp = box_pos[rb]
-                        coeff = rho * kb / nm
-                        col = cell(rbp, fi)
-                        s_rows.append(tc); s_cols.append(col); s_vals.append(coeff)
-                        gvec[m] = coeff * C[col]
-                else:  # empty:从端点 l,r 插值
+                    for fi in fis:  # 各子格用各自源计数(切格核心)
+                        tc = cell(tbp, fi)
+                        gap_cells.add(tc)
+                        gvec = np.zeros(M)
+                        for m, (rb, kb) in enumerate(zip(ref_names, ks)):
+                            if rb not in box_pos:
+                                continue
+                            rbp = box_pos[rb]
+                            coeff = rho * kb / nm
+                            col = cell(rbp, fi)
+                            s_rows.append(tc); s_cols.append(col); s_vals.append(coeff)
+                            gvec[m] = coeff * C[col]
+                        rows_local.append((tc, gvec))
+                else:  # empty:从端点 l,r 插值;切格时按子格宽度分摊
                     l, r = row["left_bin"], row["right_bin"]
                     tau = row["tau"] if row["tau"] is not None else 0.0
-                    fl, fr = fine_of_bi.get(l), fine_of_bi.get(r)
-                    nml, nmr = nm_of_bi.get(l), nm_of_bi.get(r)
+                    fl, fr = rep_fine(l), rep_fine(r)
+                    nml, nmr = n_m_of.get(l), n_m_of.get(r)
                     if fl is None or fr is None or not nml or not nmr:
                         continue
-                    for m, (rb, kb) in enumerate(zip(ref_names, ks)):
-                        if rb not in box_pos:
-                            continue
-                        rbp = box_pos[rb]
-                        cl = (1.0 - tau) * rho * kb / nml
-                        cr = tau * rho * kb / nmr
-                        col_l = cell(rbp, fl)
-                        col_r = cell(rbp, fr)
-                        s_rows.append(tc); s_cols.append(col_l); s_vals.append(cl)
-                        s_rows.append(tc); s_cols.append(col_r); s_vals.append(cr)
-                        gvec[m] = cl * C[col_l] + cr * C[col_r]
-                rows_local.append((tc, gvec))
+                    for fi in fis:
+                        tc = cell(tbp, fi)
+                        gap_cells.add(tc)
+                        frac = fine_widths[fi] / w_rust  # 不切=1;切格按宽度分摊,和=1
+                        gvec = np.zeros(M)
+                        for m, (rb, kb) in enumerate(zip(ref_names, ks)):
+                            if rb not in box_pos:
+                                continue
+                            rbp = box_pos[rb]
+                            cl = (1.0 - tau) * rho * kb / nml * frac
+                            cr = tau * rho * kb / nmr * frac
+                            col_l = cell(rbp, fl); col_r = cell(rbp, fr)
+                            s_rows.append(tc); s_cols.append(col_l); s_vals.append(cl)
+                            s_rows.append(tc); s_cols.append(col_r); s_vals.append(cr)
+                            gvec[m] = cl * C[col_l] + cr * C[col_r]
+                        rows_local.append((tc, gvec))
 
             # k项:J diag(1/c_ref) Jᵀ + (1/c_a)(J1)(J1)ᵀ
             if rows_local:
@@ -372,17 +414,16 @@ def assemble_fine(events, blocks, bins, bin_edges, box=None, chan_range=None,
             gap_cells.update(cells_d)
             T = blk["t_stop"] - blk["t_start"]
             s = (fine_centers[fis] - blk["t_start"]) / T
+            w = fine_widths[fis]  # 并集网格:逐格实际宽度(退化区≈fine_dt)
             if rp is not None and rn is not None:
-                j_pre = (1.0 - s) * fine_dt
-                j_post = s * fine_dt
+                j_pre = (1.0 - s) * w
+                j_post = s * w
                 Rblock = (_var_rn(rp, np_) * np.outer(j_pre, j_pre)
                           + _var_rn(rn, nn) * np.outer(j_post, j_post))
             elif rp is not None:
-                jf = np.full(len(fis), fine_dt)
-                Rblock = _var_rn(rp, np_) * np.outer(jf, jf)
+                Rblock = _var_rn(rp, np_) * np.outer(w, w)
             elif rn is not None:
-                jf = np.full(len(fis), fine_dt)
-                Rblock = _var_rn(rn, nn) * np.outer(jf, jf)
+                Rblock = _var_rn(rn, nn) * np.outer(w, w)
             else:
                 continue
             scatter(Rblock, cells_d, r_rows, r_cols, r_vals)
@@ -420,7 +461,7 @@ def assemble_fine(events, blocks, bins, bin_edges, box=None, chan_range=None,
         cov = cov + sp.diags(u)
 
     return FineCov(cov=cov.tocsr(), boxes=boxes, box_pos=box_pos,
-                   n_fine=n_fine, fine_dt=fine_dt, t0=t0, C=C)
+                   n_fine=n_fine, fine_dt=fine_dt, t0=t0, C=C, fine_edges=fine_edges)
 
 
 def cov_matrix(events, blocks, bins, bin_edges, box=None, chan_range=None,
@@ -443,7 +484,7 @@ def cov_matrix(events, blocks, bins, bin_edges, box=None, chan_range=None,
     nb = len(fc.boxes)
     n_cells = nb * n_fine
 
-    fine_edges = fc.t0 + np.arange(n_fine + 1) * fc.fine_dt
+    fine_edges = fc.fine_edges  # 并集网格(非均匀):必须用真实边界,不能假设 t0+arange·dt
     fine_centers = 0.5 * (fine_edges[:-1] + fine_edges[1:])
     tb_of_fine = np.clip(np.digitize(fine_centers, edges) - 1, 0, nbin - 1)
 

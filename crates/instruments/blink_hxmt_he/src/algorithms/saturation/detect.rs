@@ -1121,6 +1121,42 @@ mod weight_tests {
             "n_lost={} 应≈10(÷可用盒数);bug 会给≈20",
             gaps[0].n_lost
         );
+        // 回归锁(审查 M1-fix#1):每格 avail=2、nonzero=1 → measured n_m 必须=2(可用盒),
+        // 非 1(非零盒)。钉死 detect.rs 的 `n_m: avail[si2]`,防它被悄悄回退成 bin_refs.len()。
+        assert!(
+            gaps[0]
+                .bins
+                .iter()
+                .filter(|b| b.kind == GapBinKind::Measured)
+                .all(|b| b.n_m == 2),
+            "measured 格 n_m 应=可用盒数 2,不是非零盒数 1"
+        );
+    }
+
+    /// 回归锁(审查 M1-fix#2):真 0 格(两可用盒该格恰好都 count=0,非共饱和)必须判
+    /// **Measured**(n_m=可用盒数、shape 保持 0、不插值),而非旧码的 Empty 插值——
+    /// 可信参考观测到 0 = 源真没来,不发明计数。钉死 interpolate 的 `|| avail>0` 分支。
+    #[test]
+    fn true_zero_cell_is_measured_not_empty() {
+        let calib: Vec<f64> = [spread(0.5, 1.0, 500), spread(1.03, 1.53, 500)].concat();
+        let target = make_box(calib.clone(), vec![si(1.0, 1.03)]); // 30 格
+        // 两参考盒都可信、每格 1 事件,唯独格 15 两盒都无事件 → 真 0(非共饱和)
+        let mk = || {
+            let mut e = calib.clone();
+            for i in 0..30 {
+                if i != 15 {
+                    e.push(1.0 + (i as f64 + 0.5) * 0.001);
+                }
+            }
+            e.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            e
+        };
+        let (gaps, _) =
+            reconstruct_gaps(&target, &[&make_box(mk(), vec![]), &make_box(mk(), vec![])]);
+        let b15 = &gaps[0].bins[15];
+        assert_eq!(b15.kind, GapBinKind::Measured, "真 0 格应 Measured(有可用参考),非 Empty");
+        assert_eq!(b15.n_m, 2, "真 0 格 n_m=可用盒数=2");
+        assert!(b15.left_bin.is_none() && b15.tau.is_none(), "真 0 格不插值(无端点)");
     }
 
     /// 评审②:率的分子必须是该 packet 的**实际事例数**,不是名义 109。

@@ -123,6 +123,25 @@ pub fn inject_gaps(
     (injected, truth)
 }
 
+/// 给参考盒注入"共饱和"：在 `cosat` 区间把该盒标 unreliable（模拟它也饱和），
+/// 使 gap 重建在这些区间无有效参考 → **真实机制的 empty 格**（共饱和,非泊松空洞）。
+/// events 原样保留（共饱和是"数据被 FIFO 吞了"，不是"没有数据"）。
+pub fn cosaturate(refb: &BoxReconstructionData, cosat: &[(f64, f64)]) -> BoxReconstructionData {
+    let mut unreliable = refb.unreliable.clone();
+    for &(s, e) in cosat {
+        unreliable.push(UnreliableInterval { start: s, stop: e });
+    }
+    BoxReconstructionData {
+        events: refb.events.clone(),
+        channels: refb.channels.clone(),
+        pulse_widths: refb.pulse_widths.clone(),
+        gaps: refb.gaps.clone(),
+        packets: refb.packets.clone(),
+        packet_events: refb.packet_events.clone(),
+        unreliable,
+    }
+}
+
 /// 注入验证命令：在未饱和数据的目标盒注入假 gap，cross-ref 重建，输出真值与 filler。
 pub fn cmd_inject(args: &InjectArgs, boxes: &[(String, SciFile, f64)]) {
     eprintln!("Preparing injection data...");
@@ -166,12 +185,26 @@ pub fn cmd_inject(args: &InjectArgs, boxes: &[(String, SciFile, f64)]) {
         .collect();
 
     let (injected, truth) = inject_gaps(&box_data[ti].1, &intervals);
-    let refs: Vec<&BoxReconstructionData> = box_data
+    // 共饱和子区间（每 gap 中段）：参考盒也标 unreliable → 真实机制的 empty 格。
+    // cosat_width=0 → 空 → cosaturate 只是克隆，退化为普通(全 measured)注入。
+    let cosat: Vec<(f64, f64)> = if args.cosat_width > 0.0 {
+        args.at
+            .iter()
+            .map(|&off| {
+                let c = met + off;
+                (c - args.cosat_width / 2.0, c + args.cosat_width / 2.0)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let cosaturated: Vec<BoxReconstructionData> = box_data
         .iter()
         .enumerate()
         .filter(|&(j, _)| j != ti)
-        .map(|(_, (_, d))| d)
+        .map(|(_, (_, d))| cosaturate(d, &cosat))
         .collect();
+    let refs: Vec<&BoxReconstructionData> = cosaturated.iter().collect();
 
     let (gap_results, _rw) = reconstruct_gaps(&injected, &refs);
     let banded = assign_gap_fill_channels(&injected, &refs, &gap_results);
@@ -322,6 +355,22 @@ mod tests {
             packet_events: Vec::new(),
             unreliable: Vec::new(),
         }
+    }
+
+    #[test]
+    fn cosaturate_adds_unreliable_keeps_events() {
+        let refb = synth();
+        let out = cosaturate(&refb, &[(1.03, 1.07)]);
+        // events 原样保留（共饱和是数据被吞，不是没数据）
+        assert_eq!(out.events.len(), refb.events.len());
+        assert!((out.events[1] - 1.02).abs() < 1e-12);
+        // 共饱和区间进入 unreliable（重建时该盒被排除 → empty 格）
+        assert!(
+            out.unreliable
+                .iter()
+                .any(|u| (u.start - 1.03).abs() < 1e-12 && (u.stop - 1.07).abs() < 1e-12),
+            "cosat 区间应进入参考盒 unreliable"
+        );
     }
 
     #[test]

@@ -140,6 +140,11 @@ pub struct InjectArgs {
     /// Width of each injected gap in seconds
     #[arg(long, default_value_t = 0.03)]
     pub width: f64,
+    /// Co-saturation sub-interval width (seconds) centered in each gap: reference
+    /// boxes are marked unreliable there (simulating them also saturating), which
+    /// produces genuine empty cells (co-saturation, not a Poisson void). 0 = off.
+    #[arg(long, default_value_t = 0.0)]
+    pub cosat_width: f64,
     /// Optional: write the reconstructed event stream (spec ①) to this file.
     /// Reference boxes contribute EVT rows (source counts C); the target box's
     /// in-gap events are masked out (they are the withheld truth) and replaced

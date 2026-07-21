@@ -12,6 +12,7 @@ use commands::dump::{
     cmd_dump_ptime, cmd_dump_times,
 };
 use commands::extract::{cmd_extract_1b, cmd_extract_1k};
+use commands::inject::cmd_inject;
 use commands::reconstruct::cmd_reconstruct;
 use commands::report::cmd_report;
 use util::{filter_boxes, load_boxes, parse_epoch, warn_if_window_crosses_hour};
@@ -41,6 +42,14 @@ fn main() {
                 let boxes = load_boxes(epoch);
                 let filter_box = args.window.box_filter.clone();
                 cmd_reconstruct(&args, &boxes, &filter_box);
+            }
+            SatCommands::Inject(args) => {
+                let epoch = args.window.epoch();
+                let met = args.window.trigger_met();
+                warn_if_window_crosses_hour(met, args.window.before, args.window.after, epoch);
+                eprintln!("Loading 1B files for {}...", epoch.format("%Y-%m-%dT%H"));
+                let boxes = load_boxes(epoch);
+                cmd_inject(&args, &boxes);
             }
             SatCommands::Extract(args) => {
                 let epoch = args.window.epoch();

@@ -351,6 +351,7 @@ mod tests {
             has_cross_ref: true,
             filler_weight: 0.0,
             cov: GapCovBlock::default(),
+            bins: Vec::new(),
         }
     }
 

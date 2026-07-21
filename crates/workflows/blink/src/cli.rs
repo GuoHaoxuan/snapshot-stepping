@@ -43,6 +43,9 @@ pub enum SatCommands {
     Detect(BurstArgs),
     /// Gap-filled light curve (1B + cross-box reconstruction)
     Reconstruct(ReconstructArgs),
+    /// Mask-and-reconstruct injection validation (spec §11): inject fake gaps on a
+    /// target box in unsaturated data, cross-ref reconstruct, dump truth vs fill
+    Inject(InjectArgs),
     /// Per-event dump from 1B (raw) or 1K pipeline
     Extract(ExtractArgs),
     /// Compare 1B vs 1K event data
@@ -119,6 +122,39 @@ pub struct ReconstructArgs {
     /// Optional: write per-gap covariance block table (spec §13) to this file
     #[arg(long)]
     pub gapcov_out: Option<std::path::PathBuf>,
+    /// Optional: write per-gap 1ms bin structure table (spec ③ gapbins) to this file
+    #[arg(long)]
+    pub gapbins_out: Option<std::path::PathBuf>,
+}
+
+#[derive(Args)]
+pub struct InjectArgs {
+    #[command(flatten)]
+    pub window: BurstWindow,
+    /// Target box to inject fake gaps on (a, b, or c)
+    #[arg(long)]
+    pub target: String,
+    /// Fake-gap centers as second offsets from trigger (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub at: Vec<f64>,
+    /// Width of each injected gap in seconds
+    #[arg(long, default_value_t = 0.03)]
+    pub width: f64,
+    /// Optional: write the reconstructed event stream (spec ①) to this file.
+    /// Reference boxes contribute EVT rows (source counts C); the target box's
+    /// in-gap events are masked out (they are the withheld truth) and replaced
+    /// by FILL_GAP filler rows.
+    #[arg(long)]
+    pub events_out: Option<std::path::PathBuf>,
+    /// Optional: write per-gap covariance block table (spec §13) to this file.
+    #[arg(long)]
+    pub gapcov_out: Option<std::path::PathBuf>,
+    /// Optional: write per-gap 1ms bin structure table (spec ③) to this file.
+    #[arg(long)]
+    pub gapbins_out: Option<std::path::PathBuf>,
+    /// Optional: write per-gap truth vs fill count summary to this file.
+    #[arg(long)]
+    pub truth_out: Option<std::path::PathBuf>,
 }
 
 #[derive(Args)]

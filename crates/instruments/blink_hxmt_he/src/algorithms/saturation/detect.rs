@@ -278,6 +278,38 @@ pub struct GapCovBlock {
     pub maskable: bool,
     /// 系统偏差量级粗代理(评审④);cross-ref 段为 0
     pub sys_bias_scale: f64,
+    /// cross-ref 重整因子 ρ=N_lost/Σshape(spec §7,S 系数 ρk_b/n_m);退化段为 0
+    pub rho: f64,
+}
+
+/// gap 内单个 1ms 格的 kind(spec ③ gapbins)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GapBinKind {
+    /// 有参考盒覆盖:S 用恒等,filler↔参考系数 ρk_b/n_m
+    Measured,
+    /// 无参考盒,靠端点插值:S 借 left/right 端点格的参考事件
+    Empty,
+}
+
+/// gap 内单个 1ms 格的结构描述(spec ③ gapbins)。measured 格记有效参考盒数 n_m;
+/// empty 格记插值端点 (left_bin,right_bin) 与权重 τ,下游据此在 1ms 网格精确拼 S,
+/// 不必重猜插值算子(避免与 Rust 漂移)。
+#[derive(Debug, Clone)]
+pub struct GapBinInfo {
+    /// gap 内 1ms 格序号(0..n_sbins)
+    pub bin_index: usize,
+    /// 该格下沿的 MET 时间
+    pub t_lo: f64,
+    /// measured:有效参考盒数;empty 不适用(下游用端点格的 n_m),置 0
+    pub n_m: usize,
+    /// measured / empty
+    pub kind: GapBinKind,
+    /// empty:插值左端点 bin_index(measured 为 None)
+    pub left_bin: Option<usize>,
+    /// empty:插值右端点 bin_index(measured 为 None)
+    pub right_bin: Option<usize>,
+    /// empty:插值权重 τ=(i−l)/(r−l)(measured 为 None)
+    pub tau: Option<f64>,
 }
 
 /// 重建后的补全事件
@@ -297,6 +329,9 @@ pub struct ReconstructedGap {
     pub filler_weight: f64,
     /// spec §13 协方差块描述子(下游装配协方差用)
     pub cov: GapCovBlock,
+    /// spec ③:gap 内每 1ms 格结构(measured/empty、n_m、插值端点/τ)。cross-ref
+    /// gap 才有;退化 gap 为空(方差走 r項/filler_weight,不经 S filler↔参考)。
+    pub bins: Vec<GapBinInfo>,
 }
 
 const SHAPE_BIN_WIDTH: f64 = 0.001; // 1ms
@@ -411,11 +446,14 @@ pub fn reconstruct_gaps(
         // (Some(NaN) = (None,None) 地板填充，按 ~100% 不确定处理)
         let filler_sigma2: Option<f64>;
         let used_cross_ref: bool;
+        // spec ③/§7:cross-ref 分支填这两项(退化分支保持默认:ρ=0、空格结构)。
+        let mut cross_rho = 0.0f64;
+        let mut gap_bins: Vec<GapBinInfo> = Vec::new();
         if has_ref {
             let n_filled = shape.iter().filter(|&&v| v > 0.0).count();
             if n_filled * 100 / n_sbins >= 30 {
                 // 参考覆盖充分：用 shape 总和作为 N_lost
-                let lambda = interpolate_empty_bins(&mut shape);
+                let (lambda, interp) = interpolate_empty_bins(&mut shape);
                 let total: f64 = shape.iter().sum();
                 n_lost = total.round() as usize;
                 // 逐参考事件累加权重贡献 w_contrib = ρ · k/n_m · (1+Λ)。
@@ -434,6 +472,34 @@ pub fn reconstruct_gaps(
                         }
                     }
                 }
+                // spec ③:把逐格结构序列化出来(内部已算好,别让下游重推)。interp[si2]
+                // None ⟺ 该格 measured(有参考);Some((l,r,τ)) ⟺ 空格,借端点插值。
+                cross_rho = rho;
+                gap_bins = (0..n_sbins)
+                    .map(|si2| {
+                        let t_lo = gap_start + si2 as f64 * actual_sbin;
+                        match interp[si2] {
+                            None => GapBinInfo {
+                                bin_index: si2,
+                                t_lo,
+                                n_m: bin_refs[si2].len(),
+                                kind: GapBinKind::Measured,
+                                left_bin: None,
+                                right_bin: None,
+                                tau: None,
+                            },
+                            Some((l, r, t)) => GapBinInfo {
+                                bin_index: si2,
+                                t_lo,
+                                n_m: 0,
+                                kind: GapBinKind::Empty,
+                                left_bin: Some(l),
+                                right_bin: Some(r),
+                                tau: Some(t),
+                            },
+                        }
+                    })
+                    .collect();
                 filler_sigma2 = None; // 方差由参考事件承载
                 used_cross_ref = true;
                 eprintln!("gap[{gap_idx}]: {gap_dur:.4}s  n_lost={n_lost}  cross-ref  cov={n_filled}/{n_sbins}");
@@ -510,7 +576,7 @@ pub fn reconstruct_gaps(
                 }
             }
             refs_calib.sort_by_key(|r| r.ref_idx);
-            GapCovBlock { refs: refs_calib, ..Default::default() }
+            GapCovBlock { refs: refs_calib, rho: cross_rho, ..Default::default() }
         } else {
             // degenerate:端点率、实际事例数(自由度)、可屏蔽、系统偏代理
             let pre = packet_rate_and_n(&target.packets, gap.prev_pkt_idx);
@@ -537,6 +603,7 @@ pub fn reconstruct_gaps(
             has_cross_ref: used_cross_ref,
             filler_weight,
             cov,
+            bins: gap_bins,
         });
     }
 
@@ -1099,6 +1166,129 @@ mod weight_tests {
         assert!(cov.r_pre.is_none(), "cross-ref 段无退化端点率");
     }
 
+    /// spec ③:interpolate_empty_bins 除 lambda 外还须逐格报告插值端点/τ。
+    /// shape=[10,0,0,20] → bin1,bin2 为空,端点 l=0,r=3,τ=(i−l)/(r−l)。
+    #[test]
+    fn interp_reports_endpoints_and_tau() {
+        let mut shape = vec![10.0, 0.0, 0.0, 20.0];
+        let (_lambda, interp) = interpolate_empty_bins(&mut shape);
+        assert!(interp[0].is_none(), "measured 格 interp 应为 None");
+        assert!(interp[3].is_none(), "measured 格 interp 应为 None");
+        let (l1, r1, t1) = interp[1].unwrap();
+        assert_eq!((l1, r1), (0, 3), "端点应为 (0,3)");
+        assert!((t1 - 1.0 / 3.0).abs() < 1e-9, "τ 应=(1−0)/(3−0)=1/3,得 {t1}");
+        let (l2, r2, t2) = interp[2].unwrap();
+        assert_eq!((l2, r2), (0, 3));
+        assert!((t2 - 2.0 / 3.0).abs() < 1e-9, "τ 应=2/3,得 {t2}");
+    }
+
+    /// spec ③:单侧外推的空格也记端点(left=right=唯一有值格),τ 取 0/1 使
+    /// (1−τ)、τ 两支全落到同一端点、权重和=1。
+    #[test]
+    fn interp_extrapolation_endpoints() {
+        // bin0 左空(None,Some(1)) → 右外推;bin2 右空(Some(1),None) → 左外推
+        let mut shape = vec![0.0, 5.0, 0.0];
+        let (_lambda, interp) = interpolate_empty_bins(&mut shape);
+        assert_eq!(interp[0].map(|(l, r, t)| (l, r, t)), Some((1, 1, 1.0)));
+        assert_eq!(interp[2].map(|(l, r, t)| (l, r, t)), Some((1, 1, 0.0)));
+    }
+
+    /// spec ③:cross-ref gap 全覆盖 → 每 1ms 格 measured、n_m=参考盒数、端点留空;
+    /// bins 长度=n_sbins;t_lo 从 gap_start 起。
+    #[test]
+    fn cross_ref_gap_populates_bin_structure() {
+        let target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        // 两参考盒,gap 内 400 事件/盒 → 每 1ms 格都有事件
+        let ref_ev =
+            || [spread(0.5, 1.0, 50), spread(1.0, 1.1, 400), spread(1.1, 1.6, 50)].concat();
+        let rb = make_box(ref_ev(), vec![]);
+        let rc = make_box(ref_ev(), vec![]);
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&rb, &rc]);
+        let g = &gaps[0];
+        // n_sbins = ceil(gap_dur/1ms).max(1);gap_dur 用 stop−start(浮点误差使
+        // (1.1−1.0)/0.001≈100.0000009 → 101,勿硬编码 100)
+        let gap_dur = 1.1_f64 - 1.0_f64;
+        let n_sbins = ((gap_dur / SHAPE_BIN_WIDTH).ceil() as usize).max(1);
+        assert_eq!(g.bins.len(), n_sbins, "格数应=n_sbins={n_sbins},得 {}", g.bins.len());
+        assert!(
+            g.bins.iter().all(|b| b.kind == GapBinKind::Measured),
+            "全覆盖应全 measured"
+        );
+        assert!(g.bins.iter().all(|b| b.n_m == 2), "两参考盒 → n_m=2");
+        assert!(
+            g.bins.iter().all(|b| b.left_bin.is_none() && b.tau.is_none()),
+            "measured 格端点/τ 应留空"
+        );
+        assert!((g.bins[0].t_lo - 1.0).abs() < 1e-9, "首格 t_lo=gap_start");
+        assert_eq!(g.bins[0].bin_index, 0);
+        assert_eq!(g.bins[n_sbins - 1].bin_index, n_sbins - 1);
+        // bin_index 与 t_lo 单调递增
+        assert!(g.bins.windows(2).all(|w| w[1].bin_index == w[0].bin_index + 1));
+    }
+
+    /// spec ③:cross-ref gap 后半无参考 → 那些格 kind=empty、n_m 不用、带插值端点/τ;
+    /// measured 格反之。
+    #[test]
+    fn cross_ref_gap_marks_empty_bins() {
+        let target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        // 参考只在 gap 前半 [1.0,1.05) 有事件(覆盖~50%≥30% → cross-ref),后半空
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.05, 300), spread(1.1, 1.6, 50)].concat();
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&make_box(ref_ev, vec![])]);
+        let g = &gaps[0];
+        assert!(g.has_cross_ref, "覆盖≥30% 应判 cross-ref");
+        let n_empty = g.bins.iter().filter(|b| b.kind == GapBinKind::Empty).count();
+        assert!(n_empty > 0, "后半应出现空格");
+        for b in g.bins.iter().filter(|b| b.kind == GapBinKind::Empty) {
+            assert!(
+                b.left_bin.is_some() && b.right_bin.is_some() && b.tau.is_some(),
+                "空格必须带插值端点/τ"
+            );
+        }
+        for b in g.bins.iter().filter(|b| b.kind == GapBinKind::Measured) {
+            assert!(b.n_m >= 1, "measured 格 n_m≥1");
+            assert!(b.left_bin.is_none() && b.tau.is_none(), "measured 格端点/τ 留空");
+        }
+    }
+
+    /// spec ③/§7:cross-ref 块须记录重整因子 ρ=N_lost/Σshape。k=1 全覆盖 → ρ≈1。
+    #[test]
+    fn cross_ref_block_records_rho() {
+        let target = make_box(
+            [spread(0.5, 1.0, 50), spread(1.1, 1.6, 50)].concat(),
+            vec![si(1.0, 1.1)],
+        );
+        let ref_ev =
+            [spread(0.5, 1.0, 50), spread(1.0, 1.1, 400), spread(1.1, 1.6, 50)].concat();
+        let (gaps, _rw) = reconstruct_gaps(&target, &[&make_box(ref_ev, vec![])]);
+        let rho = gaps[0].cov.rho;
+        assert!(rho > 0.0, "cross-ref 块应记录正的 ρ,得 {rho}");
+        assert!((rho - 1.0).abs() < 0.1, "k=1 全覆盖 ρ 应≈1,得 {rho}");
+    }
+
+    /// degenerate gap 无 S filler↔参考结构 → bins 为空、ρ=0。
+    #[test]
+    fn degenerate_gap_has_empty_bins_and_zero_rho() {
+        let events = [spread(0.9, 1.0, 109), spread(1.1, 1.2, 109)].concat();
+        let mut target = make_box(events, vec![si(1.0, 1.1)]);
+        target.packets = vec![
+            PacketInfo { pkt_idx: 0, min_met: 0.9, max_met: 1.0, n_events: 109 },
+            PacketInfo { pkt_idx: 1, min_met: 1.1, max_met: 1.2, n_events: 109 },
+        ];
+        target.gaps[0].prev_pkt_idx = 0;
+        target.gaps[0].next_pkt_idx = 1;
+        let refs: Vec<&BoxReconstructionData> = vec![];
+        let (gaps, _rw) = reconstruct_gaps(&target, &refs);
+        assert!(gaps[0].bins.is_empty(), "退化 gap 不产 S 格结构");
+        assert!(gaps[0].cov.rho.abs() < 1e-12, "退化 gap ρ=0");
+    }
+
     fn dense_except(lo: f64, hi: f64, per_sec: usize, gap: (f64, f64)) -> Vec<f64> {
         let n = ((hi - lo) * per_sec as f64) as usize;
         (0..n)
@@ -1156,11 +1346,16 @@ mod weight_tests {
 /// 线性插值填补空 bin，并返回每个（原本有值的）端点 bin 被空 bin 借用的
 /// 系数和 Λ_l：空 bin i 以 l 为左端点则 l 得 (1-t)，为右端点则得 t，外推
 /// 则整份 1。用于把插值 bin 的 filler 权重反算回端点的参考事件。
-fn interpolate_empty_bins(shape: &mut [f64]) -> Vec<f64> {
+fn interpolate_empty_bins(
+    shape: &mut [f64],
+) -> (Vec<f64>, Vec<Option<(usize, usize, f64)>>) {
     let n = shape.len();
     let mut lambda = vec![0.0f64; n];
+    // spec ③:逐格插值端点/τ。None = 该格 measured(有值);Some((l,r,τ)) = 该格空,
+    // 借端点 l/r 插值。单侧外推记 (e,e,0/1) 使权重全落到唯一端点。
+    let mut interp: Vec<Option<(usize, usize, f64)>> = vec![None; n];
     if n == 0 {
-        return lambda;
+        return (lambda, interp);
     }
 
     // 预计算每个位置左边和右边最近的有值 bin 索引
@@ -1194,17 +1389,20 @@ fn interpolate_empty_bins(shape: &mut [f64]) -> Vec<f64> {
                 shape[i] = shape[l] * (1.0 - t) + shape[r] * t;
                 lambda[l] += 1.0 - t;
                 lambda[r] += t;
+                interp[i] = Some((l, r, t));
             }
             (Some(l), None) => {   // 右侧无值：常数外推
                 shape[i] = shape[l];
                 lambda[l] += 1.0;
+                interp[i] = Some((l, l, 0.0));
             }
             (None, Some(r)) => {   // 左侧无值：常数外推
                 shape[i] = shape[r];
                 lambda[r] += 1.0;
+                interp[i] = Some((r, r, 1.0));
             }
             (None, None) => {}                          // 全空，不应到达此处
         }
     }
-    lambda
+    (lambda, interp)
 }

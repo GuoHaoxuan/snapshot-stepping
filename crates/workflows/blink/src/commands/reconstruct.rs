@@ -2,7 +2,8 @@ use blink_hxmt_he::algorithms::saturation::{
     assign_gap_fill_channels, detect_fifo_reset_intervals, detect_unreliable_intervals,
     extract_packet_infos, reconstruct_gaps, reconstruct_met_channels,
     reconstruct_met_pulse_widths, reconstruct_met_times, reconstruct_with_wrap_tracking,
-    unwrap_channel, BoxReconstructionData, CHANNEL_SEC, GapCovBlock, GapRefCalib,
+    unwrap_channel, BoxReconstructionData, CHANNEL_SEC, GapBinInfo, GapBinKind, GapCovBlock,
+    GapRefCalib,
 };
 use blink_hxmt_he::io::level_1b::SciFile;
 
@@ -67,6 +68,9 @@ pub fn cmd_reconstruct(
     // gap 协方差块表行（spec §13），写到 --gapcov-out 单独文件。观测事件回归权重 1
     // （普通泊松）；恢复引入的协方差全部收进每 gap 的块，不再挂逐粒子权重。
     let mut gapcov_rows: Vec<String> = Vec::new();
+    // gap 格结构表行（spec ③），写到 --gapbins-out。每 (gap,1ms 格) 一行，只有
+    // cross-ref gap 有 S filler↔参考结构（退化 gap 的 bins 为空、不产行）。
+    let mut gapbins_rows: Vec<String> = Vec::new();
 
     for i in 0..box_data.len() {
         let refs_with_idx: Vec<(usize, &BoxReconstructionData)> = box_data
@@ -110,6 +114,10 @@ pub fn cmd_reconstruct(
                     &gr.cov,
                     |local| box_data[refs_with_idx[local].0].0.clone(),
                 ));
+                // spec ③:每 1ms 格一行（cross-ref gap 才有 bins）
+                for b in &gr.bins {
+                    gapbins_rows.push(gapbins_row(gr.gap_idx, b));
+                }
             }
         }
 
@@ -202,16 +210,43 @@ pub fn cmd_reconstruct(
             Err(e) => eprintln!("  WARN: cannot create gapcov file {}: {e}", path.display()),
         }
     }
+
+    // gap 格结构表（spec ③）→ 单独文件
+    if let Some(path) = &args.gapbins_out {
+        use std::io::Write;
+        match std::fs::File::create(path) {
+            Ok(mut f) => {
+                let body = std::iter::once(GAPBINS_HEADER.to_string())
+                    .chain(gapbins_rows.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if let Err(e) = writeln!(f, "{body}") {
+                    eprintln!("  WARN: writing gapbins {}: {e}", path.display());
+                } else {
+                    eprintln!(
+                        "  gap bin structure table → {} ({} bins)",
+                        path.display(),
+                        gapbins_rows.len()
+                    );
+                }
+            }
+            Err(e) => eprintln!("  WARN: cannot create gapbins file {}: {e}", path.display()),
+        }
+    }
 }
 
 /// gap 块表(spec §13)表头,单独文件 `--gapcov-out`。事件流给均值,块表给协方差。
-const GAPCOV_HEADER: &str = "gap_id,target_box,type,t_start,t_stop,ref_boxes,k,\
-     c_ref_cal,c_a_cal,r_pre,r_post,n_pre,n_post,maskable,sys_bias_flag,sys_bias_scale";
+pub(crate) const GAPCOV_HEADER: &str = "gap_id,target_box,type,t_start,t_stop,ref_boxes,k,\
+     c_ref_cal,c_a_cal,rho,r_pre,r_post,n_pre,n_post,maskable,sys_bias_flag,sys_bias_scale";
+
+/// gap 格结构表(spec ③)表头,单独文件 `--gapbins-out`。每 (gap,1ms 格) 一行,
+/// 下游据此在 1ms 网格精确拼 S 的 filler↔参考系数。
+pub(crate) const GAPBINS_HEADER: &str = "gap_id,bin_index,t_lo,n_m,kind,left_bin,right_bin,tau";
 
 /// 把一个 gap 的协方差块格式化成块表 CSV 行(spec §13)。变长字段(参考盒)用分号
 /// 分隔;`ref_name` 把 references 切片内下标映射为盒名。cross-ref 段填 refs/k/标定
 /// 计数、退化字段留空;degenerate 段反之。
-fn gap_cov_row(
+pub(crate) fn gap_cov_row(
     gap_idx: usize,
     target_box: &str,
     has_cross_ref: bool,
@@ -228,10 +263,12 @@ fn gap_cov_row(
     let ks = join(&|r| format!("{:.4}", r.k));
     let c_refs = join(&|r| format!("{:.0}", r.c_ref_cal));
     let c_a = cov.refs.first().map(|r| format!("{:.0}", r.c_a_cal)).unwrap_or_default();
+    // rho 是 cross-ref 专有的重整因子(spec §7);退化段留空(与 c_a_cal 一致)。
+    let rho = if has_cross_ref { format!("{:.4}", cov.rho) } else { String::new() };
     let opt_r = |o: Option<f64>| o.map(|v| format!("{v:.4}")).unwrap_or_default();
     let opt_n = |o: Option<f64>| o.map(|v| format!("{v:.0}")).unwrap_or_default();
     format!(
-        "{},{},{},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{:.4}",
+        "{},{},{},{:.6},{:.6},{},{},{},{},{},{},{},{},{},{},{},{:.4}",
         gap_idx,
         target_box,
         typ,
@@ -241,6 +278,7 @@ fn gap_cov_row(
         ks,
         c_refs,
         c_a,
+        rho,
         opt_r(cov.r_pre),
         opt_r(cov.r_post),
         opt_n(cov.n_pre),
@@ -248,6 +286,31 @@ fn gap_cov_row(
         cov.maskable,
         !has_cross_ref,
         cov.sys_bias_scale,
+    )
+}
+
+/// 把一个 gap 内 1ms 格格式化成 gapbins 表 CSV 行(spec ③)。measured 格记 n_m、
+/// 端点/τ 留空;empty 格记端点 bin_index 与 τ、n_m 留空(下游用端点格的 n_m)。
+pub(crate) fn gapbins_row(gap_idx: usize, b: &GapBinInfo) -> String {
+    let (kind, n_m, left, right, tau) = match b.kind {
+        GapBinKind::Measured => (
+            "measured",
+            b.n_m.to_string(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+        GapBinKind::Empty => (
+            "empty",
+            String::new(),
+            b.left_bin.map(|v| v.to_string()).unwrap_or_default(),
+            b.right_bin.map(|v| v.to_string()).unwrap_or_default(),
+            b.tau.map(|v| format!("{v:.4}")).unwrap_or_default(),
+        ),
+    };
+    format!(
+        "{},{},{:.6},{},{},{},{},{}",
+        gap_idx, b.bin_index, b.t_lo, n_m, kind, left, right, tau,
     )
 }
 
@@ -263,13 +326,14 @@ mod tests {
                 GapRefCalib { ref_idx: 0, k: 2.0, c_a_cal: 200.0, c_ref_cal: 100.0 },
                 GapRefCalib { ref_idx: 1, k: 1.5, c_a_cal: 200.0, c_ref_cal: 80.0 },
             ],
+            rho: 1.07,
             ..Default::default()
         };
         // references 切片内下标 0→"B"、1→"C"
         let names = ["A", "B", "C"];
         let row = gap_cov_row(3, "A", true, 1.0, 1.05, &cov, |i| names[i + 1].to_string());
         let f: Vec<&str> = row.split(',').collect();
-        assert_eq!(f.len(), 16, "行应有 16 列: {row}");
+        assert_eq!(f.len(), 17, "行应有 17 列(含 rho): {row}");
         assert_eq!(f[0], "3");
         assert_eq!(f[1], "A");
         assert_eq!(f[2], "crossref");
@@ -277,9 +341,10 @@ mod tests {
         assert_eq!(f[6], "2.0000;1.5000");
         assert_eq!(f[7], "100;80");
         assert_eq!(f[8], "200");
-        assert_eq!(f[9], "", "cross-ref 段 r_pre 应空");
-        assert_eq!(f[13], "false");
-        assert_eq!(f[14], "false", "cross-ref sys_bias_flag=false");
+        assert_eq!(f[9], "1.0700", "rho 列在 c_a_cal 之后");
+        assert_eq!(f[10], "", "cross-ref 段 r_pre 应空");
+        assert_eq!(f[14], "false");
+        assert_eq!(f[15], "false", "cross-ref sys_bias_flag=false");
     }
 
     /// degenerate 行:端点率/事例数/系统偏,参考字段留空,sys_bias_flag=true。
@@ -296,16 +361,52 @@ mod tests {
         };
         let row = gap_cov_row(0, "C", false, 2.0, 2.1, &cov, |_| String::new());
         let f: Vec<&str> = row.split(',').collect();
-        assert_eq!(f.len(), 16, "行应有 16 列: {row}");
+        assert_eq!(f.len(), 17, "行应有 17 列(含 rho): {row}");
         assert_eq!(f[2], "degenerate");
         assert_eq!(f[5], "", "退化段 ref_boxes 应空");
         assert_eq!(f[8], "", "退化段 c_a_cal 应空");
-        assert_eq!(f[9], "400.0000");
-        assert_eq!(f[10], "600.0000");
-        assert_eq!(f[11], "40");
-        assert_eq!(f[12], "60");
-        assert_eq!(f[13], "false");
-        assert_eq!(f[14], "true", "degenerate sys_bias_flag=true");
-        assert_eq!(f[15], "0.2000");
+        assert_eq!(f[9], "", "退化段 rho 应空");
+        assert_eq!(f[10], "400.0000");
+        assert_eq!(f[11], "600.0000");
+        assert_eq!(f[12], "40");
+        assert_eq!(f[13], "60");
+        assert_eq!(f[14], "false");
+        assert_eq!(f[15], "true", "degenerate sys_bias_flag=true");
+        assert_eq!(f[16], "0.2000");
+    }
+
+    /// spec ③:gapbins 行——measured 格记 n_m、kind=measured、端点/τ 留空;
+    /// empty 格记 kind=empty、端点 bin_index 与 τ、n_m 留空。
+    #[test]
+    fn gapbins_measured_and_empty_rows() {
+        let measured = GapBinInfo {
+            bin_index: 0, t_lo: 1.0, n_m: 2, kind: GapBinKind::Measured,
+            left_bin: None, right_bin: None, tau: None,
+        };
+        let rm = gapbins_row(7, &measured);
+        let fm: Vec<&str> = rm.split(',').collect();
+        assert_eq!(fm.len(), 8, "gapbins 行应 8 列: {rm}");
+        assert_eq!(fm[0], "7", "gap_id");
+        assert_eq!(fm[1], "0", "bin_index");
+        assert_eq!(fm[2], "1.000000", "t_lo");
+        assert_eq!(fm[3], "2", "measured 记 n_m");
+        assert_eq!(fm[4], "measured");
+        assert_eq!(fm[5], "", "measured left_bin 留空");
+        assert_eq!(fm[6], "", "measured right_bin 留空");
+        assert_eq!(fm[7], "", "measured tau 留空");
+
+        let empty = GapBinInfo {
+            bin_index: 5, t_lo: 1.005, n_m: 0, kind: GapBinKind::Empty,
+            left_bin: Some(3), right_bin: Some(9), tau: Some(0.25),
+        };
+        let re = gapbins_row(7, &empty);
+        let fe: Vec<&str> = re.split(',').collect();
+        assert_eq!(fe.len(), 8);
+        assert_eq!(fe[1], "5");
+        assert_eq!(fe[3], "", "empty n_m 留空(下游用端点格 n_m)");
+        assert_eq!(fe[4], "empty");
+        assert_eq!(fe[5], "3", "left_bin");
+        assert_eq!(fe[6], "9", "right_bin");
+        assert_eq!(fe[7], "0.2500", "tau");
     }
 }

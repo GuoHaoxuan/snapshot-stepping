@@ -11,7 +11,7 @@ pub use eband::{
 pub use detect::{
     detect_fifo_reset_intervals, detect_unreliable_intervals,
     extract_packet_infos, reconstruct_gaps,
-    BoxReconstructionData, GapCovBlock, GapRefCalib,
+    BoxReconstructionData, GapBinInfo, GapBinKind, GapCovBlock, GapRefCalib,
     PacketInfo, ReconstructedGap, SaturationInterval, SaturationType,
     UnreliableInterval,
 };

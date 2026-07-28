@@ -3,6 +3,7 @@ use crate::types::{Event, HxmtHe};
 use blink_algorithms::snapshot_stepping::{SearchConfig, search_new};
 use blink_core::traits::Event as _;
 use blink_core::types::{Attitude, MissionElapsedTime, Position, Signal, Trajectory};
+use std::sync::atomic::Ordering;
 use uom::si::f64::*;
 
 pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
@@ -30,7 +31,7 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 饱和排除：用 1B FIFO reset 检测得到的（已扩 ±1s 并求并的）饱和区间，
     // 剔除落在其中的候选。旧的 continuous() 成簇判据已移除——成簇本身不再
     // 作为饱和信号，留作可能的真实发现。
-    let saturation_intervals = chunk.get_saturation_intervals();
+    let saturation_intervals = chunk.saturation_intervals();
 
     let results = results
         .into_iter()
@@ -41,16 +42,24 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
         })
         .collect::<Vec<_>>();
 
-    results
+    // 两条轨道各建一次。以前写在下面的闭包里，每个候选都要把整小时的采样点
+    // （0.25 s 一采，约 14400 个）重新物化一遍。
+    let attitudes = Trajectory::<MissionElapsedTime<HxmtHe>, Attitude>::from(&chunk.att_file);
+    let positions = Trajectory::<MissionElapsedTime<HxmtHe>, Position>::from(&chunk.orbit_file);
+
+    let mut n_dropped = 0usize;
+    let signals = results
         .into_iter()
         .filter_map(|candidate| {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
-            let attitude =
-                Trajectory::<MissionElapsedTime<HxmtHe>, Attitude>::from(&chunk.att_file)
-                    .interpolate(peak)?;
-            let position =
-                Trajectory::<MissionElapsedTime<HxmtHe>, Position>::from(&chunk.orbit_file)
-                    .interpolate(peak)?;
+            // 星历表两端会外推一小截（见 Trajectory::interpolate）。仍取不到
+            // 说明表缺了一整段以上，此时候选只能丢 —— 但要计数，不能静默。
+            let (Some(attitude), Some(position)) =
+                (attitudes.interpolate(peak), positions.interpolate(peak))
+            else {
+                n_dropped += 1;
+                return None;
+            };
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -66,5 +75,11 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 position: position.state,
             })
         })
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+
+    chunk
+        .dropped_no_ephemeris
+        .store(n_dropped, Ordering::Relaxed);
+
+    signals
 }

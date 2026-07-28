@@ -2,8 +2,19 @@ use blink_core::traits::{Chunk, Instrument};
 use blink_workflow::process;
 use chrono::prelude::*;
 use indicatif::{MultiProgress, ProgressBar};
+use std::collections::BTreeMap;
 use std::fs;
 
+mod report;
+
+pub use report::{DayReport, HourRecord, HourStatus};
+
+/// 搜索一天。产出两个文件，缺一不可：
+///
+/// * `YYYYMMDD_signals.json` —— 候选
+/// * `YYYYMMDD_hours.json`   —— 逐小时账本：每个小时要么 searched、要么
+///   excluded(reason)，外加曝光秒数。没有它，"这天没候选"分不清是真没有
+///   还是根本没搜，率估计的分母就是错的。
 pub fn search_day<I: Instrument>(day: NaiveDate, multi_progress: &MultiProgress) {
     let spin_bar = multi_progress.add(ProgressBar::new(24));
     spin_bar.set_style(
@@ -29,6 +40,13 @@ pub fn search_day<I: Instrument>(day: NaiveDate, multi_progress: &MultiProgress)
         month,
         day.day(),
     );
+    let report_file = format!(
+        "{}{:04}{:02}{:02}_hours.json",
+        output_dir,
+        year,
+        month,
+        day.day(),
+    );
 
     spin_bar.set_message("check last modified");
     let last_modified = (0..24)
@@ -39,12 +57,16 @@ pub fn search_day<I: Instrument>(day: NaiveDate, multi_progress: &MultiProgress)
         })
         .max();
     if let Some(last_modified) = last_modified {
-        let last_processed = fs::metadata(&output_file).and_then(|metadata| metadata.modified());
-        if let Ok(last_processed) = last_processed {
-            let last_processed: DateTime<Utc> = last_processed.into();
-            if last_processed >= last_modified {
-                return;
-            }
+        // 两个产出都得存在且不比源数据旧才算这天做完了。少了逐小时账本
+        // （老版本只写候选）就得重跑，否则这天永远没有曝光核算。
+        let up_to_date = |path: &str| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .map(|modified| DateTime::<Utc>::from(modified) >= last_modified)
+                .unwrap_or(false)
+        };
+        if up_to_date(&output_file) && up_to_date(&report_file) {
+            return;
         }
     }
 
@@ -59,18 +81,43 @@ pub fn search_day<I: Instrument>(day: NaiveDate, multi_progress: &MultiProgress)
     );
 
     let mut all_signals = Vec::new();
-    let mut errors: Vec<(u32, blink_core::error::Error)> = Vec::new();
+    let mut hours: Vec<HourRecord> = Vec::with_capacity(24);
     for hour in 0..24 {
         let naive = day.and_hms_opt(hour, 0, 0).expect("invalid time");
-        match I::Chunk::from_epoch(&Utc.from_utc_datetime(&naive)) {
+        let record = match I::Chunk::from_epoch(&Utc.from_utc_datetime(&naive)) {
+            // 诊断量一律在这一小时的活干完之后再取：有些量（如搜索中因取不到
+            // 星历而丢弃的候选数）是干活过程中才产生的。
             Ok(chunk) => {
-                let mut sigs = chunk.search().into_iter().map(|e| e.to_unified()).collect();
-                all_signals.append(&mut sigs);
+                let metrics = |chunk: &I::Chunk| {
+                    chunk
+                        .diagnostics()
+                        .into_iter()
+                        .map(|(name, value)| (name.to_string(), value))
+                        .collect::<BTreeMap<_, _>>()
+                };
+                // 先体检再核算：coverage 要重建 1B，别为一个不搜的小时白付。
+                match chunk.exclusion() {
+                    // 体检没过：不搜。搜了也是错的，产出假候选比没有更糟。
+                    Some(reason) => {
+                        HourRecord::excluded(hour, reason, None).with_metrics(metrics(&chunk))
+                    }
+                    None => {
+                        let mut signals = chunk
+                            .search()
+                            .into_iter()
+                            .map(|signal| signal.to_unified())
+                            .collect::<Vec<_>>();
+                        let n_signals = signals.len();
+                        all_signals.append(&mut signals);
+                        HourRecord::searched(hour, chunk.coverage(), n_signals)
+                            .with_metrics(metrics(&chunk))
+                    }
+                }
             }
-            Err(e) => {
-                errors.push((hour, e));
-            }
-        }
+            // 载不进来同样是显式排除，不是"这小时没候选"。
+            Err(error) => HourRecord::excluded(hour, (&error).into(), Some(error.to_string())),
+        };
+        hours.push(record);
         progress_bar.inc(1);
     }
     progress_bar.finish_and_clear(); // 使用 finish_and_clear() 以便完成后清除内层进度条
@@ -84,31 +131,28 @@ pub fn search_day<I: Instrument>(day: NaiveDate, multi_progress: &MultiProgress)
     spin_bar_writting.set_message("writing output files");
 
     let suffix = format!(".{}.tmp", nanoid::nanoid!(3));
-    let temp_file = format!("{}{}", &output_file, &suffix);
+    let write_atomic = |path: &str, contents: &str| {
+        let temp = format!("{}{}", path, &suffix);
+        std::fs::write(&temp, contents).expect("failed to write output file");
+        std::fs::rename(&temp, path).expect("failed to rename output file");
+    };
 
     let json = serde_json::to_string_pretty(&all_signals).expect("failed to serialize signals");
-    std::fs::write(&temp_file, json).expect("failed to write output file");
-    std::fs::rename(&temp_file, &output_file).expect("failed to rename output file");
+    write_atomic(&output_file, &json);
 
-    spin_bar_writting.set_message("writing error file");
-    let error_file = format!(
+    spin_bar_writting.set_message("writing hour report");
+    let report = DayReport::new(day, I::name(), hours);
+    let json = serde_json::to_string_pretty(&report).expect("failed to serialize hour report");
+    write_atomic(&report_file, &json);
+
+    // 老版本的自由文本 errors.txt 已被逐小时账本取代；留着只会跟账本打架。
+    let _ = fs::remove_file(format!(
         "{}{:04}{:02}{:02}_errors.txt",
         output_dir,
         year,
         month,
         day.day(),
-    );
-    let error_file_temp = format!("{}{}", &error_file, &suffix);
-    if errors.is_empty() {
-        let _ = fs::remove_file(&error_file);
-    } else {
-        let mut error_contents = String::new();
-        for (hour, error) in &errors {
-            error_contents.push_str(&format!("Error {}T{:02}: {}\n", day, hour, error));
-        }
-        fs::write(&error_file_temp, error_contents).expect("failed to write error file");
-        fs::rename(&error_file_temp, &error_file).expect("failed to rename error file");
-    }
+    ));
 
     spin_bar_writting.finish_and_clear();
 }

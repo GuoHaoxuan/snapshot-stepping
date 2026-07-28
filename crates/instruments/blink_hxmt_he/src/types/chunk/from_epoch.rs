@@ -9,6 +9,8 @@ use crate::{
 use super::Chunk;
 use blink_core::{error::Error, types::MissionElapsedTime};
 use chrono::{TimeDelta, prelude::*};
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicUsize;
 
 pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
     let event_file = EventFile::from_epoch(epoch)?;
@@ -43,5 +45,7 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
             MissionElapsedTime::<HxmtHe>::from(*epoch),
             MissionElapsedTime::<HxmtHe>::from(*epoch + TimeDelta::hours(1)),
         ],
+        saturation_cache: OnceLock::new(),
+        dropped_no_ephemeris: AtomicUsize::new(0),
     })
 }

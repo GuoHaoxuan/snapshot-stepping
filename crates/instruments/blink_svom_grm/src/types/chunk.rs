@@ -1,4 +1,4 @@
-use blink_core::types::MissionElapsedTime;
+use blink_core::types::{Coverage, MissionElapsedTime};
 
 use crate::io::file::{find_att_by_time, find_evt_by_time, find_orb_by_time};
 use crate::io::{AttFile, EvtFile, OrbFile};
@@ -29,6 +29,14 @@ impl blink_core::traits::Chunk for Chunk {
 
     fn search(&self) -> Vec<blink_core::types::Signal<Self::Event>> {
         search::search(self)
+    }
+
+    fn coverage(&self) -> Coverage {
+        Coverage {
+            span_seconds: self.span[1].met() - self.span[0].met(),
+            // GRM 的搜索目前不做任何时间屏蔽
+            masked_seconds: 0.0,
+        }
     }
 
     fn last_modified(epoch: &DateTime<Utc>) -> Result<DateTime<Utc>, Error> {

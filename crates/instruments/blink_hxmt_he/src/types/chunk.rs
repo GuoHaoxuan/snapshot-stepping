@@ -1,4 +1,4 @@
-use crate::algorithms::config_guard;
+use crate::algorithms::{config_guard, duplicate_guard};
 use crate::io::level_1b::{SciFile, get_sci_filenames};
 use crate::io::level_1k::{AttFile, EventFile, OrbitFile};
 use crate::types::{Event, HxmtHe};
@@ -31,6 +31,8 @@ pub struct Chunk {
     /// 本小时因为取不到姿态/轨道而丢掉的候选数，由 `search` 写入。
     /// 星历表两端已经会外推一小截，落到这里的是表真缺了一整段以上的情形。
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 重复行占比缓存。体检和诊断都要它，而它是一遍全表扫描，只算一次。
+    pub(super) duplicate_cache: OnceLock<Option<f64>>,
 }
 
 impl blink_core::traits::Chunk for Chunk {
@@ -62,6 +64,13 @@ impl blink_core::traits::Chunk for Chunk {
         if config_guard::is_nonstandard(channels) {
             return Some(ExclusionReason::NonstandardConfig);
         }
+        // 事例表被整行重复写入的时段，显著性凭空虚高（见 duplicate_guard）。
+        if self
+            .duplicate_fraction()
+            .is_some_and(|fraction| fraction > duplicate_guard::DUPLICATE_FRACTION_THRESHOLD)
+        {
+            return Some(ExclusionReason::DuplicatedEvents);
+        }
         None
     }
 
@@ -90,6 +99,9 @@ impl blink_core::traits::Chunk for Chunk {
         let mut diagnostics = vec![("n_events", self.event_file.channels().len() as f64)];
         if let Some(fraction) = self.config_gap_fraction() {
             diagnostics.push(("config_gap_fraction", fraction));
+        }
+        if let Some(fraction) = self.duplicate_fraction() {
+            diagnostics.push(("duplicate_fraction", fraction));
         }
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
@@ -133,5 +145,18 @@ impl Chunk {
     /// 无论判决与否都记录下来，便于事后审计阈值。
     pub fn config_gap_fraction(&self) -> Option<f64> {
         config_guard::gap_fraction(self.event_file.channels())
+    }
+
+    /// 本小时重复行判据的实测值。一遍全表扫描，体检和诊断共用同一份。
+    pub fn duplicate_fraction(&self) -> Option<f64> {
+        *self.duplicate_cache.get_or_init(|| {
+            duplicate_guard::duplicate_fraction(
+                self.event_file.times(),
+                self.event_file.det_ids(),
+                self.event_file.channels(),
+                self.event_file.pulse_widths(),
+                self.event_file.event_types(),
+            )
+        })
     }
 }

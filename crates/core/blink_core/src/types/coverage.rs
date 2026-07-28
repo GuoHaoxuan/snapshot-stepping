@@ -15,8 +15,8 @@ pub enum ExclusionReason {
     CorruptData,
     /// 仪器处于非标准配置，既有解码规则不适用，搜出来的候选是假的。
     NonstandardConfig,
-    /// 时标重建塌陷：事例被堆到重复时标上，搜索会把这些堆当成成团信号。
-    DegradedTiming,
+    /// 事例表里有整行重复写入：重复把暴发和本底一起放大，显著性凭空虚高。
+    DuplicatedEvents,
     /// 文件可读但没有事例。
     NoEvents,
 }
@@ -27,7 +27,7 @@ impl ExclusionReason {
             Self::MissingData => "missing_data",
             Self::CorruptData => "corrupt_data",
             Self::NonstandardConfig => "nonstandard_config",
-            Self::DegradedTiming => "degraded_timing",
+            Self::DuplicatedEvents => "duplicated_events",
             Self::NoEvents => "no_events",
         }
     }

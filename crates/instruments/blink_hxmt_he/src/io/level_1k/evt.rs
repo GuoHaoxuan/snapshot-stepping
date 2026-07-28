@@ -44,6 +44,14 @@ impl EventFile {
         &self.channel
     }
 
+    pub fn pulse_widths(&self) -> &[u8] {
+        &self.pulse_width
+    }
+
+    pub fn event_types(&self) -> &[u8] {
+        &self.event_type
+    }
+
     fn new(filename: &str) -> Result<Self, Error> {
         let mut fptr = fitsio::FitsFile::open(filename)?;
 

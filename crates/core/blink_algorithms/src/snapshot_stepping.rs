@@ -79,12 +79,17 @@ pub fn search_new<E: Event>(
         return result;
     }
 
+    // 两个快照窗的初始化与下面主循环里的维护（见 loop 尾部）用同一种写法：
+    // 判 `[idx + 1]` 是否还在窗内，再前进并计数。早先这里判的是 `[idx]`、
+    // 前进后才计数，于是（a）会把窗外的那一个事例也计进本底，（b）末元素仍
+    // 满足时间条件时会索引 `data[len]` 越界 —— 只有当整段数据比半个窗还短
+    // 才会踩到，一小时的量踩不到，但那是靠数据量挡着、不是靠边界检查挡着。
     let mut mean_start_snapshot = cursor;
     let mut mean_stop_snapshot = cursor;
     let mut mean_numbers_snapshot: Vec<u32> = vec![0; group_number];
     mean_numbers_snapshot[data[cursor].group() as usize] = 1;
-    while mean_stop_snapshot < data.len()
-        && data[mean_stop_snapshot].time() - data[cursor].time() < config.neighbor / 2.0
+    while mean_stop_snapshot + 1 < data.len()
+        && data[mean_stop_snapshot + 1].time() - data[cursor].time() < config.neighbor / 2.0
     {
         mean_stop_snapshot += 1;
         mean_numbers_snapshot[data[mean_stop_snapshot].group() as usize] += 1;
@@ -94,8 +99,8 @@ pub fn search_new<E: Event>(
     let mut hollow_stop_snapshot = cursor;
     let mut hollow_numbers_snapshot: Vec<u32> = vec![0; group_number];
     hollow_numbers_snapshot[data[cursor].group() as usize] = 1;
-    while hollow_stop_snapshot < data.len()
-        && data[hollow_stop_snapshot].time() - data[cursor].time() < config.hollow / 2.0
+    while hollow_stop_snapshot + 1 < data.len()
+        && data[hollow_stop_snapshot + 1].time() - data[cursor].time() < config.hollow / 2.0
     {
         hollow_stop_snapshot += 1;
         hollow_numbers_snapshot[data[hollow_stop_snapshot].group() as usize] += 1;
@@ -228,4 +233,126 @@ pub fn search_new<E: Event>(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blink_core::{
+        error::Error,
+        traits::{Chunk, Instrument},
+        types::{Coverage, Signal},
+    };
+    use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+    use serde::Serialize;
+    use std::sync::OnceLock;
+
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct TestInstrument;
+
+    struct TestChunk;
+
+    impl Chunk for TestChunk {
+        type Event = TestEvent;
+
+        fn from_epoch(_: &DateTime<Utc>) -> Result<Self, Error> {
+            Err(Error::Unknown)
+        }
+        fn search(&self) -> Vec<Signal<Self::Event>> {
+            Vec::new()
+        }
+        fn last_modified(_: &DateTime<Utc>) -> Result<DateTime<Utc>, Error> {
+            Err(Error::Unknown)
+        }
+        fn coverage(&self) -> Coverage {
+            Coverage {
+                span_seconds: 0.0,
+                masked_seconds: 0.0,
+            }
+        }
+    }
+
+    impl Instrument for TestInstrument {
+        type Chunk = TestChunk;
+
+        fn ref_time() -> &'static DateTime<Utc> {
+            static REF_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
+            REF_TIME.get_or_init(|| Utc.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap())
+        }
+        fn launch_day() -> NaiveDate {
+            NaiveDate::from_ymd_opt(2017, 6, 15).unwrap()
+        }
+        fn name() -> &'static str {
+            "test"
+        }
+    }
+
+    #[derive(Serialize, Debug, Clone)]
+    struct TestEvent {
+        seconds: f64,
+    }
+
+    impl Event for TestEvent {
+        type Instrument = TestInstrument;
+        type ChannelType = u16;
+
+        fn time(&self) -> MissionElapsedTime<TestInstrument> {
+            MissionElapsedTime::new(self.seconds)
+        }
+        fn channel(&self) -> u16 {
+            100
+        }
+        fn group(&self) -> u8 {
+            0
+        }
+        fn keep(&self) -> bool {
+            true
+        }
+    }
+
+    fn at(seconds: &[f64]) -> Vec<TestEvent> {
+        seconds.iter().map(|&s| TestEvent { seconds: s }).collect()
+    }
+
+    fn run(data: &[TestEvent]) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
+        search_new(
+            data,
+            1,
+            MissionElapsedTime::<TestInstrument>::new(0.0),
+            MissionElapsedTime::<TestInstrument>::new(3600.0),
+            SearchConfig::default(),
+        )
+    }
+
+    #[test]
+    fn data_shorter_than_the_background_window_does_not_panic() {
+        // 整段数据（49 ms）比半个 neighbor 窗（500 ms）还短。快照初始化会一路
+        // 走到数组末尾 —— 早先的写法在这里索引 data[len] 越界 panic。
+        let data = at(&(0..50).map(|i| i as f64 * 1e-3).collect::<Vec<_>>());
+        // 等间隔 1 ms、max_duration 也是 1 ms，一个候选最多凑到 1 个事例，
+        // 远不够 min_number=8，所以正确结果是没有候选。
+        assert!(run(&data).is_empty());
+    }
+
+    #[test]
+    fn a_single_event_does_not_panic() {
+        assert!(run(&at(&[0.0])).is_empty());
+    }
+
+    #[test]
+    fn events_before_start_are_skipped() {
+        // start=0，负时刻的事例不该被当作起点
+        let data = at(&[-2.0, -1.0, 10.0, 20.0]);
+        assert!(run(&data).is_empty());
+    }
+
+    #[test]
+    fn a_dense_burst_on_a_quiet_background_is_found() {
+        // 本底 200 个事例铺在 20 s 上（10/s），再在 10.0 s 处塞 30 个事例进 100 us
+        let mut seconds: Vec<f64> = (0..200).map(|i| i as f64 * 0.1).collect();
+        seconds.extend((0..30).map(|i| 10.0 + i as f64 * 3e-6));
+        seconds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let found = run(&at(&seconds));
+        assert!(!found.is_empty(), "本底之上 30 个事例挤在 100us 里必须被找到");
+    }
 }

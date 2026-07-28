@@ -8,3 +8,6 @@ blink_core = { version = "0.1.0", path = "../blink_core" }
 chrono = "0.4.42"
 statrs = "0.18.0"
 uom = "0.37.0"
+
+[dev-dependencies]
+serde = { version = "1.0.228", features = ["derive"] }

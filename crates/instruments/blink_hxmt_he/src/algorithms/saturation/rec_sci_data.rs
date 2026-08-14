@@ -868,19 +868,22 @@ pub fn reconstruct_with_wrap_tracking_labeled(
     // =====================================================================
     // Step 3 的 windows(2) 只解算相邻 SEC 之间的事件。文件首个有效 SEC 之前、
     // 末个有效 SEC 之后的事件没有 pair 可以夹住，会被遗漏（典型每文件每盒
-    // 约 3000 个）。这些事件相对最近的单边锚点距离均 < 1 ptime wrap 周期
-    // （1.048576 s），所以 (锚点ptime ± 事件ptime) mod PMOD 唯一确定 elapsed，
-    // 不存在 wrap 歧义。
+    // 约 3000 个）。这些事件相对最近的单边锚点距离若 < 1 ptime wrap 周期
+    // （1.048576 s），(锚点ptime ± 事件ptime) mod PMOD 唯一确定 elapsed。
     //
     //   leading edge:  event_met = first.met - ((first.pt - evt.pt) mod PMOD) × 2μs
     //   trailing edge: event_met = last.met  + ((evt.pt - last.pt) mod PMOD)  × 2μs
     //
-    // 保守：要求 elapsed ≤ PMOD - 1（即 < 1.048574 s）。超出说明可能跨过缺失
-    // 的 SEC，无法消歧，留 NaN。
+    // 但 mod 折叠本身分不清"1 圈内"和"跨了 N 圈"——(first_pt−pt) mod PMOD 的
+    // 值域恒 < PMOD，拿它跟 PMOD−1 比永远通过（深饱和小时实测 190 万个跨圈
+    // 前导事例被折进锚点前 1 s，形成假象超密段）。唯一的圈数判据是本包 UTC
+    // 尾戳：外推 MET（换回 utc 标尺）偏离 utc_tail 超过容差即视为跨圈，留
+    // NaN。容差沿用 SEC 有效性判据的 2 s（覆盖 FIFO 驻留 + 整秒截断）。
     let pmod = PTIME_MOD as i64;
-    let elapsed_max: i64 = pmod - 1;  // 524287 ticks ≈ 1.048574 s
+    const EDGE_UTC_TOL: f64 = 2.0;
     let mut n_lead = 0u64;
     let mut n_trail = 0u64;
+    let mut n_edge_rejected = 0u64;
 
     if let (Some(&first_vi), Some(&last_vi)) = (valid_indices.first(), valid_indices.last()) {
         // ----- Leading edge: events before the first valid SEC -----
@@ -891,6 +894,7 @@ pub fn reconstruct_with_wrap_tracking_labeled(
         let evt_first = first_sec.evt_idx;
 
         for pkt_idx in 0..=pkt_first {
+            let utc_tail = get_utc_tail(&sci_data.ccsds[pkt_idx]);
             let end = if pkt_idx == pkt_first { evt_first } else { parsed[pkt_idx].len() };
             for local_idx in 0..end {
                 let evt = &parsed[pkt_idx][local_idx];
@@ -899,9 +903,13 @@ pub fn reconstruct_with_wrap_tracking_labeled(
 
                 let pt = evt.ptime as i64;
                 let elapsed_back = (first_pt - pt).rem_euclid(pmod);
-                if elapsed_back > elapsed_max { continue; }
+                let met = first_met - elapsed_back as f64 * 2e-6;
+                if (met - MET_CORRECTION - utc_tail).abs() > EDGE_UTC_TOL {
+                    n_edge_rejected += 1;
+                    continue;
+                }
 
-                result[pkt_idx][local_idx] = first_met - elapsed_back as f64 * 2e-6;
+                result[pkt_idx][local_idx] = met;
                 n_lead += 1;
             }
         }
@@ -914,6 +922,7 @@ pub fn reconstruct_with_wrap_tracking_labeled(
         let evt_last = last_sec.evt_idx;
 
         for pkt_idx in pkt_last..parsed.len() {
+            let utc_tail = get_utc_tail(&sci_data.ccsds[pkt_idx]);
             let start = if pkt_idx == pkt_last { evt_last + 1 } else { 0 };
             for local_idx in start..parsed[pkt_idx].len() {
                 let evt = &parsed[pkt_idx][local_idx];
@@ -922,9 +931,13 @@ pub fn reconstruct_with_wrap_tracking_labeled(
 
                 let pt = evt.ptime as i64;
                 let elapsed_fwd = (pt - last_pt).rem_euclid(pmod);
-                if elapsed_fwd > elapsed_max { continue; }
+                let met = last_met + elapsed_fwd as f64 * 2e-6;
+                if (met - MET_CORRECTION - utc_tail).abs() > EDGE_UTC_TOL {
+                    n_edge_rejected += 1;
+                    continue;
+                }
 
-                result[pkt_idx][local_idx] = last_met + elapsed_fwd as f64 * 2e-6;
+                result[pkt_idx][local_idx] = met;
                 n_trail += 1;
             }
         }
@@ -942,8 +955,8 @@ pub fn reconstruct_with_wrap_tracking_labeled(
             n_ghost_deadzone, n_ghost_order, n_ghost_deadzone + n_ghost_order
         );
         eprintln!(
-            "STEP4 single-anchor edges: {} leading + {} trailing = {} events resolved",
-            n_lead, n_trail, n_lead + n_trail
+            "STEP4 single-anchor edges: {} leading + {} trailing = {} events resolved, {} rejected by UTC gate",
+            n_lead, n_trail, n_lead + n_trail, n_edge_rejected
         );
         eprintln!(
             "  coverage: {}/{} events have MET ({:.1}%), {} NaN",
@@ -978,6 +991,32 @@ pub fn extract_second_event_times(sci_data: &SciFile, offset: f64) -> Vec<f64> {
     }
 
     second_times
+}
+
+/// 时间基准自检：SEC 槽的 (stime + offset) 与所在包 UTC 尾戳的偏差中位数
+/// （秒，带符号）。任何时间线位移（如 eng offset 被平台 UTC 冻结污染）都会
+/// 把这个量从 ~0 拉到位移量本身。偏差在 ±1 天外的 SEC 槽视为 CRC 碰撞幽灵
+/// （stime 是随机垃圾），不参与统计；真 SEC 数量在整小时尺度上占多数，中位
+/// 数对残余幽灵稳健。None = 没有可统计的 SEC 槽。
+pub fn sec_utc_discrepancy(sci_data: &SciFile, offset: f64) -> Option<f64> {
+    const GHOST_CUTOFF: f64 = 86_400.0;
+    let mut diffs: Vec<f64> = Vec::new();
+    for ccsds in sci_data.ccsds.iter() {
+        let utc_tail = get_utc_tail(ccsds);
+        for event in &parse_events(ccsds) {
+            if let Pack::Second { stime, .. } = event {
+                let diff = *stime as f64 + offset - utc_tail;
+                if diff.abs() < GHOST_CUTOFF {
+                    diffs.push(diff);
+                }
+            }
+        }
+    }
+    if diffs.is_empty() {
+        return None;
+    }
+    diffs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    Some(diffs[diffs.len() / 2])
 }
 
 /// 重建所有事例的 MET 时间（扁平化）。

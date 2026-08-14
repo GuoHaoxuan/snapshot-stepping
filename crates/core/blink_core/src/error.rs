@@ -8,6 +8,8 @@ pub enum Error {
     FileNotFound(String),
     #[error("invalid data: {0}")]
     InvalidData(String),
+    #[error("time reference invalid: {0}")]
+    TimeReferenceInvalid(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("unknown detector: {0}")]

@@ -19,6 +19,9 @@ pub enum ExclusionReason {
     DuplicatedEvents,
     /// 文件可读但没有事例。
     NoEvents,
+    /// 平台 UTC 广播冻结/漂移，utc−stime 找不到稳定众数：时间基准无法建立，
+    /// 1B 时间重建与饱和掩模不可信。
+    UtcFreeze,
 }
 
 impl ExclusionReason {
@@ -29,6 +32,7 @@ impl ExclusionReason {
             Self::NonstandardConfig => "nonstandard_config",
             Self::DuplicatedEvents => "duplicated_events",
             Self::NoEvents => "no_events",
+            Self::UtcFreeze => "utc_freeze",
         }
     }
 }
@@ -46,6 +50,7 @@ impl From<&Error> for ExclusionReason {
             // 目录整个不存在时是 read_dir 抛出的 io::ErrorKind::NotFound
             //（例如 1K 缺当天的产品目录），那是缺数据、不是坏数据。
             Error::Io(e) if e.kind() == std::io::ErrorKind::NotFound => Self::MissingData,
+            Error::TimeReferenceInvalid(_) => Self::UtcFreeze,
             _ => Self::CorruptData,
         }
     }

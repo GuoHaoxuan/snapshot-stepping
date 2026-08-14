@@ -25,12 +25,17 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
 
     for (box_name, sci_path) in &sci_pairs {
         let sci = SciFile::new(sci_path)?;
-        // 找对应的 eng 文件
-        let offset = eng_pairs
-            .iter()
-            .find(|(bn, _)| bn == box_name)
-            .and_then(|(_, eng_path)| read_stime_offset(eng_path).ok())
-            .unwrap_or(0.0);
+        // 找对应的 eng 文件。offset 拿不到就必须失败：曾经的 `.ok().unwrap_or(0.0)`
+        // 会让该箱锚点全体平移约 3.9 亿秒，饱和掩模整体落空，搜索照常进行——
+        // 静默污染。缺文件按 MissingData 入账，读出无稳定众数按 UtcFreeze 入账。
+        let offset = match eng_pairs.iter().find(|(bn, _)| bn == box_name) {
+            Some((_, eng_path)) => read_stime_offset(eng_path)?,
+            None => {
+                return Err(Error::FileNotFound(format!(
+                    "HE_Eng for box {box_name} at {epoch}"
+                )));
+            }
+        };
         sci_files.push((box_name.clone(), sci));
         stime_offsets.push((box_name.clone(), offset));
     }

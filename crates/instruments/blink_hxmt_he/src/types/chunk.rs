@@ -107,6 +107,19 @@ impl blink_core::traits::Chunk for Chunk {
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
         }
+        // 时间基准自检：任何时间线位移（如 eng offset 被平台 UTC 冻结污染）
+        // 都会把 SEC 槽的 stime+offset 拉离包 UTC 尾戳。取三箱中绝对值最大者。
+        let discrepancy = self
+            .sci_files
+            .iter()
+            .zip(self.stime_offsets.iter())
+            .filter_map(|((_, sci), (_, offset))| {
+                crate::algorithms::saturation::sec_utc_discrepancy(sci, *offset)
+            })
+            .max_by(|a, b| a.abs().partial_cmp(&b.abs()).expect("NaN-free diffs"));
+        if let Some(discrepancy) = discrepancy {
+            diagnostics.push(("sec_utc_discrepancy", discrepancy));
+        }
         diagnostics
     }
 

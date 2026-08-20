@@ -1,4 +1,5 @@
 use super::Chunk;
+use crate::algorithms::acd::acd_counts;
 use crate::types::{Event, HxmtHe};
 use blink_algorithms::snapshot_stepping::{SearchConfig, search_new};
 use blink_core::traits::Event as _;
@@ -73,6 +74,12 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 false_positive_per_year: candidate.false_positive_per_year(),
                 attitude: attitude.state,
                 position: position.state,
+                // ACD 符合计数必须在此刻统计：候选表落盘后事例流就不在手边了
+                acd: Some(acd_counts(
+                    &events,
+                    candidate.start.met(),
+                    candidate.stop.met(),
+                )),
             })
         })
         .collect::<Vec<_>>();

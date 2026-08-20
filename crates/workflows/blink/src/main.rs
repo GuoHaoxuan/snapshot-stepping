@@ -156,5 +156,8 @@ fn main() {
         TopCommands::Wwlln => {
             blink_wwlln::run();
         }
+        TopCommands::AcdAudit { list, out } => {
+            commands::acd_audit::cmd_acd_audit(&list, &out);
+        }
     }
 }

@@ -12,6 +12,6 @@ pub use coverage::{Coverage, ExclusionReason};
 pub use ebounds::Ebounds;
 pub use mission_elapsed_time::MissionElapsedTime;
 pub use position::Position;
-pub use signal::{Signal, UnifiedSignal};
+pub use signal::{AcdCounts, Signal, UnifiedSignal};
 pub use temporal_state::TemporalState;
 pub use trajectory::Trajectory;

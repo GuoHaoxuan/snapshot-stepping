@@ -50,6 +50,8 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 false_positive_per_year: candidate.false_positive_per_year(),
                 attitude: attitude.state,
                 position: position.state,
+                // GRM 无逐事例反符合信息
+                acd: None,
             })
         })
         .collect::<Vec<_>>()

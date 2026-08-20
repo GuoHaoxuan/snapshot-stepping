@@ -107,6 +107,18 @@ impl blink_core::traits::Chunk for Chunk {
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
         }
+        // 逐小时粒子环境：kept 事例中 ACD 符合占比。REP/辐射带小时整体抬升，
+        // 查异常天时不用回读事例表就能判断粒子环境脏不脏。
+        let (n_kept, n_acd_fired) = self
+            .event_file
+            .into_iter()
+            .filter(blink_core::traits::Event::keep)
+            .fold((0u64, 0u64), |(n, fired), event| {
+                (n + 1, fired + event.acds.iter().any(|&b| b) as u64)
+            });
+        if n_kept > 0 {
+            diagnostics.push(("acd_fraction", n_acd_fired as f64 / n_kept as f64));
+        }
         // 时间基准自检：任何时间线位移（如 eng offset 被平台 UTC 冻结污染）
         // 都会把 SEC 槽的 stime+offset 拉离包 UTC 尾戳。取三箱中绝对值最大者。
         let discrepancy = self

@@ -31,8 +31,18 @@ pub enum TopCommands {
         #[arg(long, default_value_t = 0)]
         worker: usize,
     },
-    /// WWLLN lightning association enrichment for detected signals
+    /// WWLLN lightning association + REP train-density enrichment for detected signals
     Wwlln,
+    /// Recompute per-candidate ACD coincidence counts from 1K events (offline audit;
+    /// needs 1K archive access). Input: CSV with `start`/`stop` columns (UTC or MET),
+    /// e.g. sig_all_v5.csv as-is. Output: input columns + n,n_acd,n_acd_multi,n_bg,n_acd_bg
+    AcdAudit {
+        /// Input candidate list CSV
+        list: PathBuf,
+        /// Output CSV path
+        #[arg(long, short = 'o')]
+        out: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]

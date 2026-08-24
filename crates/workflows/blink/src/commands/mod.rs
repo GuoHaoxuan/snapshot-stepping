@@ -1,4 +1,5 @@
 pub mod acd_audit;
+pub mod catalog;
 pub mod compare;
 pub mod detect;
 pub mod dump;

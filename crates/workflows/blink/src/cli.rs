@@ -42,6 +42,21 @@ pub enum TopCommands {
         /// Output CSV path
         #[arg(long, short = 'o')]
         out: PathBuf,
+        /// Event selection: `csi` = search-side keep filter (CsI, ch>=38);
+        /// `nai` = NaI non-Am241 events (electron stopping layer, positive control)
+        #[arg(long, default_value = "csi")]
+        scint: String,
+    },
+    /// Catalog stage: pool-level REP train removal, then the paper selection
+    /// criteria (fa <= 1e-5, or fa <= 1 with lightning association).
+    /// Input: tgfs.json from `blink wwlln`. Output: catalog CSV.
+    Catalog {
+        /// Enriched candidate list from `blink wwlln`
+        #[arg(default_value = "tgfs.json")]
+        input: PathBuf,
+        /// Output catalog CSV path
+        #[arg(long, short = 'o')]
+        out: PathBuf,
     },
 }
 

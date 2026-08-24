@@ -36,7 +36,15 @@ fn epoch_hour(met: f64) -> DateTime<Utc> {
         .and_utc()
 }
 
-pub fn cmd_acd_audit(list: &Path, out: &Path) {
+pub fn cmd_acd_audit(list: &Path, out: &Path, scint: &str) {
+    let select: fn(&Event) -> bool = match scint {
+        "csi" => |e| e.keep(),
+        // NaI 是电子截止层：REP 电子若真穿过 ACD，应在这里留下 ACD 符合升高
+        "nai" => {
+            |e| e.detector.scintillator == blink_hxmt_he::types::Scintillator::Nai && !e.is_am241
+        }
+        other => panic!("--scint must be `csi` or `nai`, got `{other}`"),
+    };
     let content = std::fs::read_to_string(list).expect("failed to read input csv");
     let mut lines = content.lines();
     let header = lines.next().expect("empty input csv");
@@ -94,7 +102,7 @@ pub fn cmd_acd_audit(list: &Path, out: &Path) {
             }
         };
         // 与搜索同一事例选择；1K 表按时间有序，防御性排序兜底
-        let mut events: Vec<Event> = event_file.into_iter().filter(|e| e.keep()).collect();
+        let mut events: Vec<Event> = event_file.into_iter().filter(|e| select(e)).collect();
         events.sort_by(|a, b| a.time().cmp(&b.time()));
         for index in indices {
             let (start, stop) = rows[index].window.expect("grouped rows have windows");

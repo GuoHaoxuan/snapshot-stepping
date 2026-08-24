@@ -4,41 +4,45 @@ use blink_lightning::{algorithms::coincidence_prob, database::get_lightnings};
 use blink_load::load_all;
 // use blink_svom_grm::types::SvomGrm;
 use chrono::TimeDelta;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use uom::si::f64::*;
 
 /// 列车窗口半宽：±600 s 覆盖一次辐射带沉降区穿越（REP 微暴列车持续几分钟
 /// 到几十分钟）；单个雷暴单体在星下可见仅 1–2 分钟，又不至于把同一轨道
 /// 前后两个独立雷暴缝在一起。
-const TRAIN_HALF_WINDOW_US: i64 = 600 * 1_000_000;
+pub const TRAIN_HALF_WINDOW_US: i64 = 600 * 1_000_000;
 
-/// 列车判定阈：WWLLN 关联认证 TGF（2547 个）的 neighbors_10min 分布 99 分位。
-/// 阈值只由 TGF 样本单方面定标，REP 样本不参与；认证 REP 人群从 ~60 起步
-/// （中位 656），阈值坐在两人群之间的空沟里，取 30 还是 50 结果几乎不变。
-/// 待 ACD 包络第二判据交叉验证后正式冻结。
-const TRAIN_THRESHOLD: u32 = 34;
+/// 列车判定阈（已冻结）：WWLLN 关联认证 TGF（2547 个）的 neighbors_10min
+/// 分布 99 分位。阈值只由 TGF 样本单方面定标，REP 样本不参与；认证 REP 人群
+/// 从 ~60 起步（中位 656），阈值坐在两人群之间的空沟里，取 30 还是 50 结果
+/// 几乎不变。原计划的 ACD 逐事例符合交叉验证已做且判据不成立——HE 里的 REP
+/// 信号是沉降电子的轫致辐射光子（NaI 截止层几乎无信号，ACD 符合超出 <1%），
+/// 与 TGF 伽马对 ACD 同盲——故本阈值以 TGF 侧定标独立成立。
+pub const TRAIN_THRESHOLD: u32 = 34;
 
-#[derive(Serialize)]
-struct LightningInfo {
-    associated: bool,
-    coincidence_probability: f64,
+#[derive(Serialize, Deserialize)]
+pub struct LightningInfo {
+    pub associated: bool,
+    pub coincidence_probability: f64,
 }
 
-#[derive(Serialize)]
-struct TrainInfo {
+#[derive(Serialize, Deserialize)]
+pub struct TrainInfo {
     /// 全初始候选池（fa < 20 /yr，含亚阈）中，start 落在本候选 start 的
     /// 半开窗 [t−600s, t+600s) 内的其他候选数
-    neighbors_10min: u32,
-    /// neighbors_10min > 34：REP 微暴列车成员，出目录时应整体摘除
-    is_train: bool,
+    pub neighbors_10min: u32,
+    /// neighbors_10min > 34：REP 微暴列车成员，目录阶段池级摘除
+    pub is_train: bool,
 }
 
-#[derive(Serialize)]
-struct Tgf {
-    signal: UnifiedSignal,
-    lightning: LightningInfo,
-    train: TrainInfo,
+/// tgfs.json 的单条记录。`blink wwlln` 写出（富集不筛选），
+/// `blink catalog` 读回做池级清洁与判选。
+#[derive(Serialize, Deserialize)]
+pub struct Tgf {
+    pub signal: UnifiedSignal,
+    pub lightning: LightningInfo,
+    pub train: TrainInfo,
 }
 
 /// 逐候选数出半开窗 [t−600s, t+600s) 内的其他时刻数（排除自身）。

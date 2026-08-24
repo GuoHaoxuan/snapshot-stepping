@@ -101,6 +101,8 @@ dependencies = [
  "blink_wwlln",
  "chrono",
  "clap",
+ "serde_json",
+ "uom",
 ]
 
 [[package]]

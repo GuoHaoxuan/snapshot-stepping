@@ -69,8 +69,14 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
          neighbors_10min,n,n_acd,n_acd_multi,n_bg,n_acd_bg\n",
     );
     let (mut n_direct, mut n_lightning) = (0usize, 0usize);
+    // 救援带内任何候选只要偶然关联上就会被误救进目录，故期望误救 =
+    // 整个带（不只被选中者）的 Σ coincidence_probability。
     let mut expected_misassoc = 0.0f64;
     for tgf in &tgfs {
+        let fa = tgf.signal.false_positive_per_year;
+        if fa > SELECT_FA_DIRECT && fa <= SELECT_FA_ASSOC {
+            expected_misassoc += tgf.lightning.coincidence_probability;
+        }
         let tier = match select(tgf) {
             Some(Tier::Direct) => {
                 n_direct += 1;
@@ -78,7 +84,6 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
             }
             Some(Tier::Lightning) => {
                 n_lightning += 1;
-                expected_misassoc += tgf.lightning.coincidence_probability;
                 "lightning"
             }
             None => continue,
@@ -117,7 +122,11 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
         n_direct + n_lightning,
         out.display()
     );
-    eprintln!("catalog: expected chance associations in lightning tier: {expected_misassoc:.1}");
+    eprintln!(
+        "catalog: expected false rescues (sum coinc over the {:e} < fa <= {:e} band): \
+         {expected_misassoc:.1}",
+        SELECT_FA_DIRECT, SELECT_FA_ASSOC
+    );
 }
 
 #[cfg(test)]

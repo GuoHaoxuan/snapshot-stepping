@@ -13,7 +13,7 @@ use blink_hxmt_he::algorithms::saturation::{
     assign_gap_fill_channels, detect_fifo_reset_intervals, detect_unreliable_intervals,
     extract_packet_infos, reconstruct_gaps, reconstruct_met_channels,
     reconstruct_met_pulse_widths, reconstruct_met_times, reconstruct_with_wrap_tracking,
-    unwrap_channel, BoxReconstructionData, PacketInfo, SaturationInterval, SaturationType,
+    unwrap_channel, BoxReconstructionData, SaturationInterval, SaturationType,
     UnreliableInterval, CHANNEL_SEC,
 };
 use blink_hxmt_he::io::level_1b::SciFile;
@@ -363,6 +363,7 @@ fn write_table(path: &std::path::Path, header: &str, rows: &[String], label: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blink_hxmt_he::algorithms::saturation::PacketInfo;
 
     fn synth() -> BoxReconstructionData {
         BoxReconstructionData {

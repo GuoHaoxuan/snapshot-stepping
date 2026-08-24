@@ -709,7 +709,7 @@ pub fn reconstruct_with_wrap_tracking_labeled(
                             let c = &candidates[cand_idx];
                             let efwd_local = (c.elapsed_fwd - a_efwd).rem_euclid(pmod);
                             let mut w = (limit - efwd_local).div_euclid(pmod);
-                            let mut push_entry = |e: i64,
+                            let push_entry = |e: i64,
                                                   entries: &mut Vec<(usize, i64)>,
                                                   tails: &mut Vec<i64>,
                                                   tail_entry: &mut Vec<usize>,

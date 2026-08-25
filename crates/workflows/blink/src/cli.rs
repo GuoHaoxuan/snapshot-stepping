@@ -30,6 +30,9 @@ pub enum TopCommands {
         /// This worker's index in [0, workers)
         #[arg(long, default_value_t = 0)]
         worker: usize,
+        /// Instrument to search
+        #[arg(long, value_enum, default_value_t = Instrument::HxmtHe)]
+        instrument: Instrument,
     },
     /// WWLLN lightning association + REP train-density enrichment for detected signals
     Wwlln,
@@ -290,4 +293,14 @@ pub struct DumpRangeArgs {
     /// Filter to a single box (a, b, or c). If omitted, all boxes.
     #[arg(long = "box")]
     pub box_filter: Option<String>,
+}
+
+/// 可搜索的仪器。搜索管线本身与仪器无关（见 `blink_search::search_day`），
+/// 每颗星只提供自己的 `Chunk`/`Event` 实现。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum Instrument {
+    /// Insight-HXMT/HE（1B 重建 + 饱和掩模）
+    HxmtHe,
+    /// SVOM/GRM（L1B 事例 + GTI 曝光）
+    SvomGrm,
 }

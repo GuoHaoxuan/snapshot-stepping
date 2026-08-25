@@ -8,6 +8,7 @@ blink_core = { version = "0.1.0", path = "../../core/blink_core" }
 blink_wwlln = { version = "0.1.0", path = "../blink_wwlln" }
 blink_hxmt_he = { version = "0.1.0", path = "../../instruments/blink_hxmt_he" }
 blink_search = { version = "0.1.0", path = "../blink_search" }
+blink_svom_grm = { version = "0.1.0", path = "../../instruments/blink_svom_grm" }
 chrono = "0.4.43"
 clap = { version = "4.5.54", features = ["derive"] }
 serde_json = "1.0.149"

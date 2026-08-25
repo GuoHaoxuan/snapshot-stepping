@@ -98,6 +98,7 @@ dependencies = [
  "blink_core",
  "blink_hxmt_he",
  "blink_search",
+ "blink_svom_grm",
  "blink_wwlln",
  "chrono",
  "clap",

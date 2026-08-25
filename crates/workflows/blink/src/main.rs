@@ -4,7 +4,7 @@ mod util;
 
 use clap::Parser;
 
-use cli::{Cli, DumpCommands, SatCommands, TopCommands};
+use cli::{Cli, DumpCommands, Instrument, SatCommands, TopCommands};
 use commands::compare::cmd_compare;
 use commands::detect::cmd_detect;
 use commands::dump::{
@@ -138,6 +138,7 @@ fn main() {
             to,
             workers,
             worker,
+            instrument,
         } => {
             let start = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
                 .unwrap_or_else(|e| panic!("invalid --from date '{from}': {e}"));
@@ -149,9 +150,16 @@ fn main() {
                 "--worker {worker} out of range [0, {workers})"
             );
             eprintln!(
-                "TGF search {start} .. {end}  (worker {worker}/{workers})",
+                "TGF search {start} .. {end}  (worker {worker}/{workers}, {instrument:?})",
             );
-            blink_search::search_range::<blink_hxmt_he::types::HxmtHe>(start, end, workers, worker);
+            match instrument {
+                Instrument::HxmtHe => blink_search::search_range::<blink_hxmt_he::types::HxmtHe>(
+                    start, end, workers, worker,
+                ),
+                Instrument::SvomGrm => blink_search::search_range::<blink_svom_grm::types::SvomGrm>(
+                    start, end, workers, worker,
+                ),
+            }
         }
         TopCommands::Wwlln => {
             blink_wwlln::run();

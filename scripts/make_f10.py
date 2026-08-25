@@ -185,8 +185,14 @@ def make_figure(mode, x, obs, allr, all_dt, dtau, dtau_dt, gecam_s, n_fill,
         axc.set_ylim(1e2, 1e7)
         axc.set_ylabel("Net count rate (evt/s)  [symlog, linthresh=1e3]")
         title = (f"GRB 221009A full burst: event-level{eng_str} vs "
-                 f"GECAM-C  [{bin_w} s bins, GECAM ×{GECAM_SCALE:.0f}]  "
-                 f"(EXPLORATORY, not for paper)")
+                 f"GECAM-C  [{bin_w} s bins, GECAM ×{GECAM_SCALE:.0f}]")
+        # GECAM-C crosses the South Atlantic Anomaly over T0-50..+172 s; its
+        # low-gain rate there is particle background, not source flux, so the
+        # early orange hump is a data-quality flag, not a real disagreement.
+        axc.axvspan(xlo, 172.0, color="0.55", alpha=0.10, zorder=0)
+        axc.annotate("GECAM-C in SAA\n(data unusable)", xy=(55, 2.3e6),
+                     ha="center", va="center", fontsize=13, color="0.30",
+                     style="italic", fontweight="bold")
     elif is_flare:
         w = (x >= xlo) & (x < xhi)
         top = np.nanmax([np.nanmax(np.nan_to_num(allr[w])),

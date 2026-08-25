@@ -1,4 +1,4 @@
-use blink_core::types::{Coverage, MissionElapsedTime};
+use blink_core::types::{Coverage, ExclusionReason, MissionElapsedTime};
 
 use crate::io::file::{find_att_by_time, find_evt_by_time, find_orb_by_time};
 use crate::io::{AttFile, EvtFile, OrbFile};
@@ -10,6 +10,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod from_epoch;
 mod search;
+
+/// 判为「整段重复」的时间回跳幅度下限（秒）。
+///
+/// 实测回跳幅度是双峰的，中间空着：一半在 1–5 个时间量化步（2⁻²⁰ s ≈ 0.95 µs）
+/// 以内，另一半在 0.49–1.0 s。阈值取在空当里，并且正好等于搜索的
+/// `max_duration` —— 回跳幅度超过搜索窗长才谈得上破坏窗长判据，小于它的
+/// 抖动排序一下就没了。
+pub const REVERSAL_THRESHOLD: f64 = 1e-3;
 
 pub struct Chunk {
     pub span: [MissionElapsedTime<SvomGrm>; 2],
@@ -36,6 +44,24 @@ impl blink_core::traits::Chunk for Chunk {
         search::search(self)
     }
 
+    /// 搜索前体检。
+    fn exclusion(&self) -> Option<ExclusionReason> {
+        // 大幅时间回跳＝同一段物理时间被记录了两次。实测 2025-09-19 02 时的
+        // 一处：两份事例内容互不相同（逐行去重抓不到），重叠区间的计数率从
+        // 1846 c/s 翻到 4036 c/s。排序修不了——率翻倍依旧；不排序更糟，搜索
+        // 假设输入有序，乱序会让 max_duration 判据失效，实测把一个真实只有
+        // 10 个事例的 1 ms 窗报成 count=315、fa 下溢为 0，畅通无阻地进判选。
+        //
+        // 小幅回跳不在此列，交给 `search` 排序：见 `REVERSAL_THRESHOLD`。
+        if self.evt_file.time_reversals().max_magnitude > REVERSAL_THRESHOLD {
+            return Some(ExclusionReason::UnorderedEvents);
+        }
+        if self.evt_file.into_iter().next().is_none() {
+            return Some(ExclusionReason::NoEvents);
+        }
+        None
+    }
+
     /// 曝光核算走 L1B 的 GTI。GRM 的小时文件并不覆盖整点到整点：实测
     /// 2025-09-19 全天 GTI 合计只有 86400 s 的 85.3%，单个小时低到 1778 s。
     /// 缺口全部落在南大西洋异常区，即 GTI 已经把 SAA 排除掉了，所以这里
@@ -55,7 +81,12 @@ impl blink_core::traits::Chunk for Chunk {
 
     /// 在 `search` 之后取：`dropped_no_ephemeris` 是搜索过程中才产生的。
     fn diagnostics(&self) -> Vec<(&'static str, f64)> {
-        let mut diagnostics = Vec::new();
+        // 判没判都记，便于事后审计阈值
+        let reversals = self.evt_file.time_reversals();
+        let mut diagnostics = vec![
+            ("time_reversals", reversals.count as f64),
+            ("max_time_reversal", reversals.max_magnitude),
+        ];
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));

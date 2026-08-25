@@ -17,6 +17,10 @@ pub enum ExclusionReason {
     NonstandardConfig,
     /// 事例表里有整行重复写入：重复把暴发和本底一起放大，显著性凭空虚高。
     DuplicatedEvents,
+    /// 事例表内部时间不单调。同一段物理时间被记录了两次（两份事例内容不同，
+    /// 逐行去重抓不到），合并后计数率翻倍；而搜索假设输入按时间有序，乱序会
+    /// 让窗长判据失效、计数虚涨。排序救不了——率翻倍依然在。
+    UnorderedEvents,
     /// 文件可读但没有事例。
     NoEvents,
     /// 平台 UTC 广播冻结/漂移，utc−stime 找不到稳定众数：时间基准无法建立，
@@ -31,6 +35,7 @@ impl ExclusionReason {
             Self::CorruptData => "corrupt_data",
             Self::NonstandardConfig => "nonstandard_config",
             Self::DuplicatedEvents => "duplicated_events",
+            Self::UnorderedEvents => "unordered_events",
             Self::NoEvents => "no_events",
             Self::UtcFreeze => "utc_freeze",
         }

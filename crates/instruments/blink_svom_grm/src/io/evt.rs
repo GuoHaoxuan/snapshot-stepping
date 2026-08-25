@@ -17,6 +17,7 @@ mod gti_hdu;
 
 // use ebounds_hdu::EboundsHdu;
 use events_hdu::EventsHdu;
+pub use events_hdu::TimeReversals;
 use gti_hdu::GtiHdu;
 
 use crate::{io::evt::events_hdu::EventsHduIterator, types::Event};
@@ -27,6 +28,8 @@ pub struct EvtFile {
     events01: EventsHdu,
     events02: EventsHdu,
     events03: EventsHdu,
+    /// 三路合计的时间回跳统计，载入时算一次（体检和诊断共用）。
+    time_reversals: TimeReversals,
 }
 
 impl EvtFile {
@@ -39,12 +42,18 @@ impl EvtFile {
         let events02 = EventsHdu::from_fptr(&mut fptr, 2)?;
         let events03 = EventsHdu::from_fptr(&mut fptr, 3)?;
 
+        let time_reversals = events01
+            .time_reversals()
+            .merge(events02.time_reversals())
+            .merge(events03.time_reversals());
+
         Ok(Self {
             // ebounds,
             gti,
             events01,
             events02,
             events03,
+            time_reversals,
         })
     }
 }
@@ -53,6 +62,11 @@ impl EvtFile {
     /// 本文件 GTI 与 `[from, to]` 的交集长度（秒）——曝光核算的分子。
     pub fn gti_seconds_within(&self, from: f64, to: f64) -> f64 {
         self.gti.seconds_within(from, to)
+    }
+
+    /// 三路事例表合计的时间回跳统计，见 `TimeReversals`。
+    pub fn time_reversals(&self) -> TimeReversals {
+        self.time_reversals
     }
 }
 

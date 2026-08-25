@@ -15,11 +15,15 @@ use uom::si::f64::*;
 pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 事例准入见 `Event::keep`。不过滤的话一小时会冒出 15–30 个软谱噪声
     // 候选（实测），它们会淹没真信号。
-    let events = chunk
+    let mut events = chunk
         .evt_file
         .into_iter()
         .filter(|event| event.keep())
         .collect::<Vec<_>>();
+    // 三路各自内部会有几处微米级的时间抖动（1–5 个量化步），k 路归并把它
+    // 原样传了出来，而 search_new 假定输入有序。幅度大到有害的回跳已在
+    // `exclusion` 挡掉，剩下的排一下就干净了——数组本来就基本有序，代价很低。
+    events.sort();
     let results = search_new(
         &events,
         1,

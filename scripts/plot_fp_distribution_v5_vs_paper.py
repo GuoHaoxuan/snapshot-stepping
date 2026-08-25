@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fp-distribution: the paper-era catalog against v5, same window (< 2025-01-01).
 
-Same conventions as plot_fp_distribution_v4_vs_paper.py (log-bin histogram of
+Same conventions as archive/2026-07-v4-catalog/plot_fp_distribution_v4_vs_paper.py (log-bin histogram of
 false_positive_per_year, power-law fits, lightning-associated curve), with the
 v5 catalog (time-base fix: stime-offset mode + freeze guard + edge UTC gate)
 laid over v4 and the paper-era search. The generations differ by pipeline:

@@ -96,6 +96,7 @@ test-results/
 
 # Local data caches (large, regeneratable)
 n_below_study/
+figdata/
 
 # Internal notes / vendor docs — kept locally, not tracked
 saturation_docs/

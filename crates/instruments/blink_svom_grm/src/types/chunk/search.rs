@@ -8,10 +8,18 @@ use blink_core::types::MissionElapsedTime;
 use blink_core::types::Position;
 use blink_core::types::Signal;
 use blink_core::types::Trajectory;
+use blink_core::traits::Event as _;
+use std::sync::atomic::Ordering;
 use uom::si::f64::*;
 
 pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
-    let events = chunk.evt_file.into_iter().collect::<Vec<_>>();
+    // 事例准入见 `Event::keep`。不过滤的话一小时会冒出 15–30 个软谱噪声
+    // 候选（实测），它们会淹没真信号。
+    let events = chunk
+        .evt_file
+        .into_iter()
+        .filter(|event| event.keep())
+        .collect::<Vec<_>>();
     let results = search_new(
         &events,
         1,
@@ -27,16 +35,23 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
         },
     );
 
-    results
+    // 两条轨道各建一次，而不是每个候选重建一遍（1 Hz 采样，一小时约 3700 点）。
+    let attitudes = Trajectory::<MissionElapsedTime<SvomGrm>, Attitude>::from(&chunk.att_file);
+    let positions = Trajectory::<MissionElapsedTime<SvomGrm>, Position>::from(&chunk.orb_file);
+
+    let mut n_dropped = 0usize;
+    let signals = results
         .into_iter()
         .filter_map(|candidate| {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
-            let attitude =
-                Trajectory::<MissionElapsedTime<SvomGrm>, Attitude>::from(&chunk.att_file)
-                    .interpolate(peak)?;
-            let position =
-                Trajectory::<MissionElapsedTime<SvomGrm>, Position>::from(&chunk.orb_file)
-                    .interpolate(peak)?;
+            // GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s，那一截里的
+            // 候选取不到星历。丢可以，静默丢不行——记账见 `diagnostics`。
+            let (Some(attitude), Some(position)) =
+                (attitudes.interpolate(peak), positions.interpolate(peak))
+            else {
+                n_dropped += 1;
+                return None;
+            };
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -50,9 +65,16 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 false_positive_per_year: candidate.false_positive_per_year(),
                 attitude: attitude.state,
                 position: position.state,
-                // GRM 无逐事例反符合信息
+                // GRM 逐事例有 ANTI_COIN（与 CPD 带电粒子探测器符合），
+                // 尚未接入 —— 见本 crate 的 `OPEN-QUESTIONS.md`。
                 acd: None,
             })
         })
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+
+    chunk
+        .dropped_no_ephemeris
+        .store(n_dropped, Ordering::Relaxed);
+
+    signals
 }

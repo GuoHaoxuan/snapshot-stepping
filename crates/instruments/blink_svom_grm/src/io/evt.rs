@@ -17,13 +17,13 @@ mod gti_hdu;
 
 // use ebounds_hdu::EboundsHdu;
 use events_hdu::EventsHdu;
-// use gti_hdu::GtiHdu;
+use gti_hdu::GtiHdu;
 
 use crate::{io::evt::events_hdu::EventsHduIterator, types::Event};
 
 pub struct EvtFile {
     // ebounds: EboundsHdu,
-    // gti: GtiHdu,
+    gti: GtiHdu,
     events01: EventsHdu,
     events02: EventsHdu,
     events03: EventsHdu,
@@ -34,18 +34,25 @@ impl EvtFile {
         let mut fptr = fitsio::FitsFile::open(path)?;
 
         // let ebounds = EboundsHdu::from_fptr(&mut fptr)?;
-        // let gti = GtiHdu::from_fptr(&mut fptr)?;
+        let gti = GtiHdu::from_fptr(&mut fptr)?;
         let events01 = EventsHdu::from_fptr(&mut fptr, 1)?;
         let events02 = EventsHdu::from_fptr(&mut fptr, 2)?;
         let events03 = EventsHdu::from_fptr(&mut fptr, 3)?;
 
         Ok(Self {
             // ebounds,
-            // gti,
+            gti,
             events01,
             events02,
             events03,
         })
+    }
+}
+
+impl EvtFile {
+    /// 本文件 GTI 与 `[from, to]` 的交集长度（秒）——曝光核算的分子。
+    pub fn gti_seconds_within(&self, from: f64, to: f64) -> f64 {
+        self.gti.seconds_within(from, to)
     }
 }
 

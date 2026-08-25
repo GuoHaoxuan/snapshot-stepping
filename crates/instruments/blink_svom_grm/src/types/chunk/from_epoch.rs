@@ -25,5 +25,6 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
         att_file,
         evt_file,
         orb_file,
+        dropped_no_ephemeris: Default::default(),
     })
 }

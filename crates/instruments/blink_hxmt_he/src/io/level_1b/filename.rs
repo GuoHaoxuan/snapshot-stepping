@@ -1,3 +1,15 @@
+//! 1B 归档的路径与文件名解析。
+//!
+//! 归档按 APID 分子目录：`$HXMT_1B_DIR/YYYY/YYYYMMDD/<APID>/`。本模块只解
+//! 析下面用到的两类；同级还有几个目录，找遥测时会碰到：
+//!
+//! * `0531` = HE_ANBL（模拟板 HK，`TMYxxx` 原始遥测量）
+//! * `0549` = HE_HV（高压）
+//! * `0162` = GPS_Status
+//!
+//! `sci` 那三个（`0642/0922/1686` = HE_Evt_Src）装的是 882 B 的原始 CCSDS
+//! 包，要自己解；`eng` 那三个（`0766/1009/1781`）含 `sTime_Last_Bdc`。
+
 use chrono::prelude::*;
 use std::path::Path;
 use std::{env, sync::LazyLock};

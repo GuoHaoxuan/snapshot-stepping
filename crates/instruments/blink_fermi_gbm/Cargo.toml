@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+blink_algorithms = { version = "0.1.0", path = "../../core/blink_algorithms" }
+blink_core = { version = "0.1.0", path = "../../core/blink_core" }
+chrono = "0.4.42"
+fitsio = { version = "0.21.9", features = ["fitsio-src"] }
+serde = { version = "1.0.228", features = ["derive"] }
+uom = "0.37.0"

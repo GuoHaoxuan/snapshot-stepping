@@ -107,17 +107,28 @@ pub fn search_new<E: Event>(
         hollow_numbers_snapshot[data[hollow_stop_snapshot].group() as usize] += 1;
     }
 
+    // 三个逐组计数器在循环外分配一次、每轮重置。它们原先是每个 cursor 位置
+    // 现做一个 vec![] 加两次 clone —— 外层循环有多少个事例就分配多少次三连，
+    // GBM 一小时是三千万个事例，即九千万次 malloc/free，全是白付的。
+    let mut numbers: Vec<u32> = vec![0; group_number];
+    let mut mean_numbers: Vec<u32> = vec![0; group_number];
+    let mut hollow_numbers: Vec<u32> = vec![0; group_number];
+
     loop {
         let mut step = 0;
-        let mut numbers: Vec<u32> = vec![0; group_number];
+        numbers.fill(0);
         numbers[data[cursor].group() as usize] = 1;
         let mut mean_stop = mean_stop_snapshot;
-        let mut mean_numbers = mean_numbers_snapshot.clone();
+        mean_numbers.copy_from_slice(&mean_numbers_snapshot);
         let mut hollow_stop = hollow_stop_snapshot;
-        let mut hollow_numbers = hollow_numbers_snapshot.clone();
+        hollow_numbers.copy_from_slice(&hollow_numbers_snapshot);
 
         loop {
-            let total_number = numbers.iter().sum(); // [TODO] Use real total number calculation
+            // 窗内事例数恒等于 step + 1：进循环时记了 1 个，之后每前进一步
+            // 正好收一个事例进某个组。原先每轮都把逐组计数器求和一遍，而内层
+            // 循环 GBM 一小时要跑六亿次。
+            let total_number = step as u32 + 1;
+            debug_assert_eq!(total_number, numbers.iter().sum::<u32>());
             let duration = data[cursor + step].time() - data[cursor].time();
             if total_number >= config.min_number && duration >= config.min_duration {
                 let mean_start_time = (data[cursor].time() - config.neighbor / 2.0).max(start);

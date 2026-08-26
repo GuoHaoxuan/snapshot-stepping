@@ -303,4 +303,6 @@ pub enum Instrument {
     HxmtHe,
     /// SVOM/GRM（L1B 事例 + GTI 曝光）
     SvomGrm,
+    /// Fermi/GBM（continuous TTE，NaI 与 BGO 分组）
+    FermiGbm,
 }

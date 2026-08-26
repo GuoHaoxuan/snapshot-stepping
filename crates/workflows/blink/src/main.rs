@@ -159,6 +159,11 @@ fn main() {
                 Instrument::SvomGrm => blink_search::search_range::<blink_svom_grm::types::SvomGrm>(
                     start, end, workers, worker,
                 ),
+                Instrument::FermiGbm => {
+                    blink_search::search_range::<blink_fermi_gbm::types::FermiGbm>(
+                        start, end, workers, worker,
+                    )
+                }
             }
         }
         TopCommands::Wwlln => {

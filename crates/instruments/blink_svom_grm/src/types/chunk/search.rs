@@ -69,8 +69,8 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 false_positive_per_year: candidate.false_positive_per_year(),
                 attitude: attitude.state,
                 position: position.state,
-                // GRM 逐事例有 ANTI_COIN（与 CPD 带电粒子探测器符合），
-                // 尚未接入 —— 见本 crate 的 `OPEN-QUESTIONS.md`。
+                // 事例表里有一列 ANTI_COIN，但它的语义未经确认，尚未接入
+                // —— 见本 crate 的 `OPEN-QUESTIONS.md`。
                 acd: None,
             })
         })

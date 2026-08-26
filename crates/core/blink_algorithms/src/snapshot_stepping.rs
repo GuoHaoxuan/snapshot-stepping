@@ -1,6 +1,7 @@
 use crate::{constants::DAYS_PER_YEAR, types::candidate::Candidate};
 use blink_core::{traits::Event, types::MissionElapsedTime};
 use statrs::distribution::{DiscreteCDF, Poisson};
+use statrs::function::gamma::ln_gamma;
 use uom::si::f64::*;
 
 pub struct SearchConfig {
@@ -127,7 +128,20 @@ pub fn search_new<E: Event>(
                     (mean_stop_time - mean_start_time) - (hollow_stop_time - hollow_start_time);
                 let pure_mean_percent =
                     (duration / pure_mean_duration).get::<uom::si::ratio::ratio>();
-                let fps = (0..group_number)
+                let threshold = config.false_positive_per_year
+                    / (uom::si::f64::Time::new::<uom::si::time::second>(3600.0)
+                        * 24.0
+                        * DAYS_PER_YEAR
+                        / duration)
+                        .get::<uom::si::ratio::ratio>();
+                // 单组要越线，它的尾概率得小于 threshold/group_number（Bonferroni
+                // 要乘回组数）。剪枝就按这个门槛来。
+                let ln_group_threshold = (threshold / group_number as f64).ln();
+                // 逐组算尾概率并直接取最小值。这里曾经先 collect 成 Vec 再取 min，
+                // 而这段在内层循环里 —— 每个 (cursor, step) 组合都要在堆上分配再
+                // 释放一次，GBM 一天这种组合是几十亿次量级。fold 的次序与原先
+                // 逐个取 min 完全一致，数值不变。
+                let smallest_fp = (0..group_number)
                     .map(|group| {
                         let pure_mean_number = mean_numbers[group] - hollow_numbers[group];
                         let equivalent_background_number =
@@ -135,12 +149,27 @@ pub fn search_new<E: Event>(
                         match (equivalent_background_number, numbers[group]) {
                             (0.0, 0) => 1.0,
                             (0.0, _) => 1.0,
-                            _ => Poisson::new(equivalent_background_number)
-                                .unwrap()
-                                .sf(numbers[group] as u64),
+                            _ => {
+                                let lambda = equivalent_background_number;
+                                let count = numbers[group] as f64;
+                                // 剪枝，严格等价，不是近似：
+                                //   sf(count) = P(X > count) >= P(X = count+1)
+                                // 所以只要单项 PMF 已经不小于本组门槛，这一组的
+                                // 尾概率也不小于门槛，越不了线。此时返回 +inf 让它
+                                // 退出 min 的竞争 —— 真正触发时取到的最小值必然来自
+                                // 没被剪的组，那个值是精确算出来的，候选记录的显著性
+                                // 因此不受影响。省掉的全是注定不触发的不完全伽马。
+                                let ln_pmf = -lambda + (count + 1.0) * lambda.ln()
+                                    - ln_gamma(count + 2.0);
+                                if ln_pmf >= ln_group_threshold {
+                                    f64::INFINITY
+                                } else {
+                                    Poisson::new(lambda).unwrap().sf(numbers[group] as u64)
+                                }
+                            }
                         }
                     })
-                    .collect::<Vec<f64>>();
+                    .fold(f64::INFINITY, f64::min);
                 // 分组判据的 Bonferroni 校正：每个窗口按组各做一次检验，就
                 // 有几次中奖机会，纯本底下"至少一组超阈"的概率约为单组的
                 // group_number 倍。取最显著的那组、乘以组数，误报率就回到
@@ -148,17 +177,8 @@ pub fn search_new<E: Event>(
                 //
                 // 单组时是 fps[0] * 1.0，浮点上精确等于原值 —— HXMT 与 SVOM
                 // 逐位不受影响。
-                let fp = fps
-                    .iter()
-                    .copied()
-                    .fold(f64::INFINITY, f64::min)
-                    * group_number as f64;
-                let threshold = config.false_positive_per_year
-                    / (uom::si::f64::Time::new::<uom::si::time::second>(3600.0)
-                        * 24.0
-                        * DAYS_PER_YEAR
-                        / duration)
-                        .get::<uom::si::ratio::ratio>();
+                let fp = smallest_fp * group_number as f64;
+
                 if fp < threshold {
                     let total_equivalent_background_number = (0..group_number)
                         .map(|group| mean_numbers[group] - hollow_numbers[group])

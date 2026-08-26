@@ -141,7 +141,18 @@ pub fn search_new<E: Event>(
                         }
                     })
                     .collect::<Vec<f64>>();
-                let fp = fps[0];
+                // 分组判据的 Bonferroni 校正：每个窗口按组各做一次检验，就
+                // 有几次中奖机会，纯本底下"至少一组超阈"的概率约为单组的
+                // group_number 倍。取最显著的那组、乘以组数，误报率就回到
+                // false_positive_per_year 标称的水平，`fa` 的语义不变。
+                //
+                // 单组时是 fps[0] * 1.0，浮点上精确等于原值 —— HXMT 与 SVOM
+                // 逐位不受影响。
+                let fp = fps
+                    .iter()
+                    .copied()
+                    .fold(f64::INFINITY, f64::min)
+                    * group_number as f64;
                 let threshold = config.false_positive_per_year
                     / (uom::si::f64::Time::new::<uom::si::time::second>(3600.0)
                         * 24.0
@@ -167,6 +178,7 @@ pub fn search_new<E: Event>(
                         data[cursor + step].time(),
                         total_number,
                         total_equivalent_background_number,
+                        fp,
                     );
                     if let Some(last) = result.last_mut() {
                         if last.mergeable(&current, 0.0) {
@@ -290,6 +302,7 @@ mod tests {
     #[derive(Serialize, Debug, Clone)]
     struct TestEvent {
         seconds: f64,
+        group: u8,
     }
 
     impl Event for TestEvent {
@@ -303,7 +316,7 @@ mod tests {
             100
         }
         fn group(&self) -> u8 {
-            0
+            self.group
         }
         fn keep(&self) -> bool {
             true
@@ -311,7 +324,34 @@ mod tests {
     }
 
     fn at(seconds: &[f64]) -> Vec<TestEvent> {
-        seconds.iter().map(|&s| TestEvent { seconds: s }).collect()
+        seconds
+            .iter()
+            .map(|&s| TestEvent {
+                seconds: s,
+                group: 0,
+            })
+            .collect()
+    }
+
+    /// 本底 200 个事例铺在 20 s 上，再在 10.0 s 处塞 30 个事例进 100 us。
+    fn burst_on_quiet_background(group: u8) -> Vec<TestEvent> {
+        let mut seconds: Vec<f64> = (0..200).map(|i| i as f64 * 0.1).collect();
+        seconds.extend((0..30).map(|i| 10.0 + i as f64 * 3e-6));
+        seconds.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        seconds
+            .iter()
+            .map(|&s| TestEvent { seconds: s, group })
+            .collect()
+    }
+
+    fn run_grouped(data: &[TestEvent], group_number: usize) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
+        search_new(
+            data,
+            group_number,
+            MissionElapsedTime::<TestInstrument>::new(0.0),
+            MissionElapsedTime::<TestInstrument>::new(3600.0),
+            SearchConfig::default(),
+        )
     }
 
     fn run(data: &[TestEvent]) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
@@ -348,11 +388,42 @@ mod tests {
 
     #[test]
     fn a_dense_burst_on_a_quiet_background_is_found() {
-        // 本底 200 个事例铺在 20 s 上（10/s），再在 10.0 s 处塞 30 个事例进 100 us
-        let mut seconds: Vec<f64> = (0..200).map(|i| i as f64 * 0.1).collect();
-        seconds.extend((0..30).map(|i| 10.0 + i as f64 * 3e-6));
-        seconds.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let found = run(&at(&seconds));
+        let found = run(&burst_on_quiet_background(0));
         assert!(!found.is_empty(), "本底之上 30 个事例挤在 100us 里必须被找到");
+    }
+
+    #[test]
+    fn a_single_group_degenerates_to_the_ungrouped_formula() {
+        // 分组判据必须在 n=1 时精确退化：候选带的显著性要跟拿合并计数重算
+        // 出来的一模一样。HXMT 与 SVOM 都跑在 n=1 上，这条守住它们逐位不变。
+        let found = run_grouped(&burst_on_quiet_background(0), 1);
+        assert!(!found.is_empty());
+        for candidate in &found {
+            assert_eq!(
+                candidate.sf(),
+                crate::poisson::sf(candidate.mean, candidate.count),
+                "n=1 时存下来的 sf 必须与重算值逐位相同"
+            );
+        }
+    }
+
+    #[test]
+    fn splitting_into_groups_costs_a_trials_factor() {
+        // 同一份数据，事例全在第 0 组。分成两组等于每个窗口多了一次中奖机会，
+        // Bonferroni 把显著性乘上组数，正好抵消翻倍的误报率。
+        let one = run_grouped(&burst_on_quiet_background(0), 1);
+        let two = run_grouped(&burst_on_quiet_background(0), 2);
+        assert_eq!(one.len(), two.len());
+        for (single, pair) in one.iter().zip(two.iter()) {
+            assert_eq!(pair.sf(), single.sf() * 2.0, "两组应付 2 倍试验次数惩罚");
+        }
+    }
+
+    #[test]
+    fn a_burst_confined_to_a_later_group_is_still_found() {
+        // 信号整个落在第 1 组。判据只看第 0 组的话这里什么都搜不到 —— 对 GBM
+        // 就是把 BGO 分出去之后 NaI 侧的暴发全丢了。
+        let found = run_grouped(&burst_on_quiet_background(1), 2);
+        assert!(!found.is_empty(), "落在非第 0 组的暴发必须照样被找到");
     }
 }

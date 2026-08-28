@@ -16,7 +16,7 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
     // 2017-10 之前 NaI 没有逐小时数据，2020 年 BGO 只在单独的 BGO/ 目录里。
     let mut tte_files = Vec::new();
     let mut groups = Vec::new();
-    for detector in [Detector::Nai, Detector::Bgo] {
+    for detector in Detector::ALL {
         let mut found_any = false;
         for name in detector.names() {
             let Some(path) = find_tte(epoch, name) else {

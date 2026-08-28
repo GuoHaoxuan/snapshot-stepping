@@ -1,6 +1,7 @@
 use crate::{constants::DAYS_PER_YEAR, types::candidate::Candidate};
 use blink_core::{traits::Event, types::MissionElapsedTime};
 use statrs::distribution::{DiscreteCDF, Poisson};
+use std::cmp::Ordering;
 use statrs::function::gamma::ln_gamma;
 use uom::si::f64::*;
 
@@ -11,6 +12,14 @@ pub struct SearchConfig {
     pub hollow: Time,
     pub false_positive_per_year: f64,
     pub min_number: u32,
+    /// 判定一次触发需要多少个组各自越线（符合数）。
+    ///
+    /// 单组仪器填 1，此时整套判据精确退化回"这一组自己显著就算"。多组时
+    /// 要求 N 组同时越线，是为了挡掉只点亮一个组的东西——GBM 上实测一天
+    /// 12.6 万个候选里有 72.6% 是宇宙线穿过整星，每个探头各留一个高能沉积，
+    /// 12 个 NaI 合起来轻易凑够 min_number，但两个 BGO 各自只有一个，
+    /// 要求 2 组符合就能把它们挡在外面。
+    pub coincidence: usize,
 }
 
 impl Default for SearchConfig {
@@ -22,8 +31,22 @@ impl Default for SearchConfig {
             hollow: Time::new::<uom::si::time::millisecond>(10.0),
             false_positive_per_year: 20.0,
             min_number: 8,
+            coincidence: 1,
         }
     }
+}
+
+/// 从 n 个里取 k 个的组合数。组数最多十几，不会溢出。
+fn binomial(n: usize, k: usize) -> f64 {
+    if k > n {
+        return 0.0;
+    }
+    let k = k.min(n - k);
+    let mut result = 1.0_f64;
+    for i in 0..k {
+        result = result * (n - i) as f64 / (i + 1) as f64;
+    }
+    result
 }
 
 // fn coincidence_prob(probs: &[f64], n: usize) -> f64 {
@@ -113,6 +136,8 @@ pub fn search_new<E: Event>(
     let mut numbers: Vec<u32> = vec![0; group_number];
     let mut mean_numbers: Vec<u32> = vec![0; group_number];
     let mut hollow_numbers: Vec<u32> = vec![0; group_number];
+    // 符合判据要挑第 N 小的组 p 值，这块缓冲同样只分配一次。
+    let mut group_fps: Vec<f64> = vec![0.0; group_number];
 
     loop {
         let mut step = 0;
@@ -145,18 +170,22 @@ pub fn search_new<E: Event>(
                         * DAYS_PER_YEAR
                         / duration)
                         .get::<uom::si::ratio::ratio>();
-                // 单组要越线，它的尾概率得小于 threshold/group_number（Bonferroni
-                // 要乘回组数）。剪枝就按这个门槛来。
-                let ln_group_threshold = (threshold / group_number as f64).ln();
+                // 要求 n 组里有 N 组各自越线，零假设下的虚警率是 C(n,N)·alpha^N，
+                // 令它等于 threshold 便反解出单组该用的门槛。N=1 时就是
+                // threshold/n，即 Bonferroni；剪枝也按这个门槛来。
+                let n_required = config.coincidence.max(1).min(group_number);
+                let combinations = binomial(group_number, n_required);
+                let group_threshold =
+                    (threshold / combinations).powf(1.0 / n_required as f64);
+                let ln_group_threshold = group_threshold.ln();
                 // 逐组算尾概率并直接取最小值。这里曾经先 collect 成 Vec 再取 min，
                 // 而这段在内层循环里 —— 每个 (cursor, step) 组合都要在堆上分配再
                 // 释放一次，GBM 一天这种组合是几十亿次量级。fold 的次序与原先
                 // 逐个取 min 完全一致，数值不变。
-                let smallest_fp = (0..group_number)
-                    .map(|group| {
-                        let pure_mean_number = mean_numbers[group] - hollow_numbers[group];
-                        let equivalent_background_number =
-                            pure_mean_number as f64 * pure_mean_percent;
+                let group_fp = |group: usize| -> f64 {
+                    let pure_mean_number = mean_numbers[group] - hollow_numbers[group];
+                    let equivalent_background_number =
+                        pure_mean_number as f64 * pure_mean_percent;
                         match (equivalent_background_number, numbers[group]) {
                             (0.0, 0) => 1.0,
                             (0.0, _) => 1.0,
@@ -179,8 +208,7 @@ pub fn search_new<E: Event>(
                                 }
                             }
                         }
-                    })
-                    .fold(f64::INFINITY, f64::min);
+                };
                 // 分组判据的 Bonferroni 校正：每个窗口按组各做一次检验，就
                 // 有几次中奖机会，纯本底下"至少一组超阈"的概率约为单组的
                 // group_number 倍。取最显著的那组、乘以组数，误报率就回到
@@ -188,7 +216,19 @@ pub fn search_new<E: Event>(
                 //
                 // 单组时是 fps[0] * 1.0，浮点上精确等于原值 —— HXMT 与 SVOM
                 // 逐位不受影响。
-                let fp = smallest_fp * group_number as f64;
+                // N=1 走原来的路：只要最小的那个，不必排序，数值与从前逐位相同。
+                let fp = if n_required == 1 {
+                    (0..group_number).map(group_fp).fold(f64::INFINITY, f64::min)
+                        * group_number as f64
+                } else {
+                    // 需要第 N 小的组 p 值。组数最多十几个，就地插入排序最省。
+                    for group in 0..group_number {
+                        group_fps[group] = group_fp(group);
+                    }
+                    let slice = &mut group_fps[..group_number];
+                    slice.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+                    combinations * slice[n_required - 1].powi(n_required as i32)
+                };
 
                 if fp < threshold {
                     let total_equivalent_background_number = (0..group_number)
@@ -376,13 +416,46 @@ mod tests {
     }
 
     fn run_grouped(data: &[TestEvent], group_number: usize) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
+        run_coincident(data, group_number, 1)
+    }
+
+    fn run_coincident(
+        data: &[TestEvent],
+        group_number: usize,
+        coincidence: usize,
+    ) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
         search_new(
             data,
             group_number,
             MissionElapsedTime::<TestInstrument>::new(0.0),
             MissionElapsedTime::<TestInstrument>::new(3600.0),
-            SearchConfig::default(),
+            SearchConfig {
+                coincidence,
+                ..SearchConfig::default()
+            },
         )
+    }
+
+    /// 本底铺在两组上，再在 10.0 s 处让指定的那些组各自出现一次暴发。
+    fn burst_in_groups(groups: &[u8]) -> Vec<TestEvent> {
+        let mut events: Vec<TestEvent> = Vec::new();
+        for group in 0..2u8 {
+            // 两组本底错开半个间隔。若只错开很小一点，第二组的某个本底事例会
+            // 正好压在暴发窗边界上、凑成一次真的符合——那是数据的巧合，不是
+            // 判据的毛病，但会让这个用例测不到想测的东西。
+            events.extend((0..200).map(|i| TestEvent {
+                seconds: i as f64 * 0.1 + group as f64 * 0.05,
+                group,
+            }));
+        }
+        for &group in groups {
+            events.extend((0..30).map(|i| TestEvent {
+                seconds: 10.0 + i as f64 * 3e-6,
+                group,
+            }));
+        }
+        events.sort_by(|a, b| a.seconds.partial_cmp(&b.seconds).unwrap());
+        events
     }
 
     fn run(data: &[TestEvent]) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
@@ -448,6 +521,27 @@ mod tests {
         for (single, pair) in one.iter().zip(two.iter()) {
             assert_eq!(pair.sf(), single.sf() * 2.0, "两组应付 2 倍试验次数惩罚");
         }
+    }
+
+    #[test]
+    fn requiring_two_groups_rejects_a_burst_that_lights_only_one() {
+        // 只点亮一个组 —— GBM 上单探头爆发就是这个样子。要求两组符合时，
+        // 第二小的组 p 值接近 1，判据过不去。
+        let data = burst_in_groups(&[0]);
+        assert!(!run_coincident(&data, 2, 1).is_empty(), "单组符合下本该找得到");
+        assert!(
+            run_coincident(&data, 2, 2).is_empty(),
+            "要求两组符合时，只点亮一组的暴发必须被挡掉"
+        );
+    }
+
+    #[test]
+    fn requiring_two_groups_keeps_a_burst_seen_by_both() {
+        // 两组同时超出 —— 各向同性照射的真信号该有的样子。
+        assert!(
+            !run_coincident(&burst_in_groups(&[0, 1]), 2, 2).is_empty(),
+            "两组同时超出的暴发必须留下"
+        );
     }
 
     #[test]

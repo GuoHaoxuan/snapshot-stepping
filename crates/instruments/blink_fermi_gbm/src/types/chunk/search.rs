@@ -49,6 +49,8 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
             hollow: Time::new::<uom::si::time::millisecond>(10.0),
             false_positive_per_year: 20.0,
             min_number: 8,
+            // 三组里要求两组同时越线，用来挡穿过整星的宇宙线
+            coincidence: 2,
         },
     );
 

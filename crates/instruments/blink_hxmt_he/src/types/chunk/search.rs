@@ -26,6 +26,8 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
             hollow: Time::new::<uom::si::time::millisecond>(10.0),
             false_positive_per_year: 20.0,
             min_number: 8,
+            // 单组：18 个 CsI 合成一路，符合判据退化
+            coincidence: 1,
         },
     );
 

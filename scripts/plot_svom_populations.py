@@ -37,11 +37,13 @@ def main():
 
     high = rate > RATE_HIGH
     onehz = (~high) & (phase >= PHASE_LO) & (phase <= PHASE_HI)
-    # 注意：这一类是「剩下的」，没有任何一条正面的 TGF 判据。真要认定
-    # 得靠闪电关联（WWLLN），本轮没做。
+    # 这一类由排除法得到，但已有正面证据：WWLLN 覆盖内的 177 个里 67 个
+    # 关联到闪电（±5 ms、800 km），偶然期望 0.74 个；同样处理的两个对照组
+    # 落在期望上（高本底 0/18，1 Hz 2/23 可由相位窗的已知污染解释）。
+    # 见 plot_svom_association.py。
     tgf = ~(high | onehz)
     classes = [
-        (tgf, "其余候选", "tab:blue"),
+        (tgf, "TGF 候选", "tab:blue"),
         (onehz, "1 Hz 假信号", "tab:orange"),
         (high, "高本底 (SAA 西缘)", "tab:red"),
     ]
@@ -63,7 +65,7 @@ def main():
     pcm = ax.scatter(lon[tgf], lat[tgf], c=np.clip(fa[tgf], -60, None), s=17,
                      cmap="viridis_r", vmin=-60, vmax=-5, lw=0.2, edgecolor="0.3",
                      transform=ccrs.PlateCarree(),
-                     label="其余候选 (%d)" % tgf.sum(), zorder=4)
+                     label="TGF 候选 (%d)" % tgf.sum(), zorder=4)
     # 色标放地图正下方。不能用 colorbar(ax=...)：地图有固定纵横比，让它
     # 从自己的格子里让出空间会把地图整个缩小。先画一次拿到地图落定后的
     # 位置，再按这个位置摆一根等宽的色标轴。
@@ -72,7 +74,7 @@ def main():
     cax = fig.add_axes([box.x0 + 0.15 * box.width, box.y0 - 0.085,
                         0.70 * box.width, 0.018])
     cb = fig.colorbar(pcm, cax=cax, orientation="horizontal")
-    cb.set_label("其余候选的 $\\log_{10}$ fa（越小越显著）", fontsize=9)
+    cb.set_label("TGF 候选的 $\\log_{10}$ fa（越小越显著）", fontsize=9)
     cb.ax.tick_params(labelsize=8)
     for mask, name, color, marker in [
         (onehz, "1 Hz 假信号", "tab:orange", "^"),
@@ -115,7 +117,8 @@ def main():
     ax.legend(fontsize=8)
 
     fig.suptitle("SVOM/GRM 792 天全量搜索：显著候选里的三个群体\n"
-             "（「其余候选」是扣掉前两类后剩下的，未做闪电关联）", fontsize=12)
+             "（TGF 候选一类由排除法得到，另经 WWLLN 闪电关联证实，见关联图）",
+             fontsize=12)
     fig.savefig(args.output, dpi=140, bbox_inches="tight")
     print("wrote", args.output)
     for mask, name, _ in classes:

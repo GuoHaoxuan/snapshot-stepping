@@ -17,7 +17,7 @@ plt.rcParams.update({
     "axes.unicode_minus": False,
 })
 
-RATE_HIGH = 2e4          # 本底率高于此即在 SAA 西缘，谱硬度恒为 1.00
+RATE_HIGH = 2e4          # 本底率高于此即在 SAA 西缘，窗内能谱与本底无异
 PHASE_LO, PHASE_HI = 0.49, 0.52   # 1 Hz 假信号聚集的整秒相位
 
 
@@ -30,7 +30,7 @@ def main():
     rows = list(csv.DictReader(open(args.csv)))
     col = lambda k, t=float: np.array([t(r[k]) for r in rows])
     lon, lat = col("lon"), col("lat")
-    phase, rate, hard = col("phase"), col("rate_bkg"), col("hardness")
+    phase, rate, ratio = col("phase"), col("rate_bkg"), col("pi_med_ratio")
     dur = col("dur_ms")
 
     high = rate > RATE_HIGH
@@ -70,10 +70,10 @@ def main():
     ax = fig.add_subplot(gs[1, 1])
     bins = np.linspace(0, 4, 41)
     for mask, name, color in classes:
-        ax.hist(hard[mask], bins=bins, histtype="step", lw=1.6, color=color, label=name)
-    ax.set_xlabel("硬度比")
+        ax.hist(ratio[mask], bins=bins, histtype="step", lw=1.6, color=color, label=name)
+    ax.set_xlabel("能道中位数比（窗内 / 本底）")
     ax.set_ylabel("候选数")
-    ax.set_title("(c) 硬度比：TGF 候选偏硬", fontsize=10)
+    ax.set_title("(c) 窗内事例的能道中位数 ÷ 本底的", fontsize=10)
     ax.legend(fontsize=8)
 
     ax = fig.add_subplot(gs[1, 2])
@@ -90,8 +90,8 @@ def main():
     fig.savefig(args.output, dpi=140, bbox_inches="tight")
     print("wrote", args.output)
     for mask, name, _ in classes:
-        print("  %-16s %4d  硬度比中位 %.2f  本底率中位 %7.0f c/s" %
-              (name, mask.sum(), np.median(hard[mask]), np.median(rate[mask])))
+        print("  %-16s %4d  能道中位数比 %.2f  本底率中位 %7.0f c/s" %
+              (name, mask.sum(), np.median(ratio[mask]), np.median(rate[mask])))
 
 
 if __name__ == "__main__":

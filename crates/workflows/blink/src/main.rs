@@ -166,9 +166,11 @@ fn main() {
                 }
             }
         }
-        TopCommands::Wwlln => {
-            blink_wwlln::run();
-        }
+        TopCommands::Wwlln { instrument } => match instrument {
+            Instrument::HxmtHe => blink_wwlln::run::<blink_hxmt_he::types::HxmtHe>(),
+            Instrument::SvomGrm => blink_wwlln::run::<blink_svom_grm::types::SvomGrm>(),
+            Instrument::FermiGbm => blink_wwlln::run::<blink_fermi_gbm::types::FermiGbm>(),
+        },
         TopCommands::AcdAudit { list, out, scint } => {
             commands::acd_audit::cmd_acd_audit(&list, &out, &scint);
         }

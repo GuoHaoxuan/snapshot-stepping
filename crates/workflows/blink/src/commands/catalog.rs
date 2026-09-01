@@ -75,7 +75,8 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
     for tgf in &tgfs {
         let fa = tgf.signal.false_positive_per_year;
         if fa > SELECT_FA_DIRECT && fa <= SELECT_FA_ASSOC {
-            expected_misassoc += tgf.lightning.coincidence_probability;
+            // 覆盖外的候选没有偶合概率，也不可能被关联救进来，不计入期望误救。
+            expected_misassoc += tgf.lightning.coincidence_probability.unwrap_or(0.0);
         }
         let tier = match select(tgf) {
             Some(Tier::Direct) => {
@@ -98,7 +99,7 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
             None => ",,,,".to_string(),
         };
         rows.push_str(&format!(
-            "{},{},{},{:.9},{},{:e},{:.4},{:.4},{:.1},{},{},{:e},{},{}\n",
+            "{},{},{},{:.9},{},{:e},{:.4},{:.4},{:.1},{},{},{},{},{}\n",
             s.start.format("%Y%m%d"),
             time_string(&s.start),
             time_string(&s.stop),
@@ -110,7 +111,10 @@ pub fn cmd_catalog(input: &Path, out: &Path) {
             s.position.altitude.get::<uom::si::length::meter>(),
             tier,
             u8::from(tgf.lightning.associated),
-            tgf.lightning.coincidence_probability,
+            tgf.lightning
+                .coincidence_probability
+                .map(|p| format!("{p:e}"))
+                .unwrap_or_default(),
             tgf.train.neighbors_10min,
             acd,
         ));

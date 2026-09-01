@@ -18,7 +18,9 @@ plt.rcParams.update({
 })
 
 RATE_HIGH = 2e4          # 本底率高于此即在 SAA 西缘，窗内能谱与本底无异
-PHASE_LO, PHASE_HI = 0.49, 0.52   # 1 Hz 假信号聚集的整秒相位
+PHASE_LO, PHASE_HI = 0.500, 0.510  # 1 Hz 假信号聚集的整秒相位。窗宽 10 ms，
+                                   # 实测 102 个而均匀期望 9.9 个，纯度约 90%；
+                                   # 放宽到 ±30 ms 只多收 19 个而纯度掉到 75%
 
 
 def main():
@@ -35,27 +37,53 @@ def main():
 
     high = rate > RATE_HIGH
     onehz = (~high) & (phase >= PHASE_LO) & (phase <= PHASE_HI)
+    # 注意：这一类是「剩下的」，没有任何一条正面的 TGF 判据。真要认定
+    # 得靠闪电关联（WWLLN），本轮没做。
     tgf = ~(high | onehz)
     classes = [
-        (tgf, "TGF 候选", "tab:blue"),
+        (tgf, "其余候选", "tab:blue"),
         (onehz, "1 Hz 假信号", "tab:orange"),
         (high, "高本底 (SAA 西缘)", "tab:red"),
     ]
 
-    fig = plt.figure(figsize=(15, 8))
-    gs = fig.add_gridspec(2, 3, height_ratios=[1.25, 1], hspace=0.28, wspace=0.26)
+    fig = plt.figure(figsize=(15, 7.2))
+    gs = fig.add_gridspec(2, 3, height_ratios=[0.85, 1], hspace=0.62, wspace=0.26)
 
     ax = fig.add_subplot(gs[0, :], projection=ccrs.PlateCarree())
-    ax.set_global()
+    # 只画卫星到得了的纬度带。SVOM 轨道倾角 30°，候选实测落在 ±29.1°，
+    # 留 4° 余量；高纬那一大片本来就不可能有候选，画出来只是压扁地图。
+    span = np.ceil(np.abs(lat).max()) + 4
+    ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.LAND, facecolor="0.95")
     ax.add_feature(cfeature.COASTLINE, lw=0.4, edgecolor="0.4")
     ax.gridlines(draw_labels=False, lw=0.3, color="0.88")
-    for mask, name, color in classes:
-        ax.scatter(lon[mask], lat[mask], s=16, c=color, lw=0.2, edgecolor="k",
-                   alpha=0.85, transform=ccrs.PlateCarree(),
-                   label="%s (%d)" % (name, mask.sum()), zorder=4)
+    # 其余候选按显著性着色。fa 跨 260 个量级，取 log 后再把最显著的一端压到
+    # −60，否则少数极端值会把整条色标拉平、看不出多数候选的差别。
+    fa = np.log10(col("fa"))
+    pcm = ax.scatter(lon[tgf], lat[tgf], c=np.clip(fa[tgf], -60, None), s=17,
+                     cmap="viridis_r", vmin=-60, vmax=-5, lw=0.2, edgecolor="0.3",
+                     transform=ccrs.PlateCarree(),
+                     label="其余候选 (%d)" % tgf.sum(), zorder=4)
+    # 色标放地图正下方。不能用 colorbar(ax=...)：地图有固定纵横比，让它
+    # 从自己的格子里让出空间会把地图整个缩小。先画一次拿到地图落定后的
+    # 位置，再按这个位置摆一根等宽的色标轴。
+    fig.canvas.draw()
+    box = ax.get_position()
+    cax = fig.add_axes([box.x0 + 0.15 * box.width, box.y0 - 0.085,
+                        0.70 * box.width, 0.018])
+    cb = fig.colorbar(pcm, cax=cax, orientation="horizontal")
+    cb.set_label("其余候选的 $\\log_{10}$ fa（越小越显著）", fontsize=9)
+    cb.ax.tick_params(labelsize=8)
+    for mask, name, color, marker in [
+        (onehz, "1 Hz 假信号", "tab:orange", "^"),
+        (high, "高本底 (SAA 西缘)", "tab:red", "s"),
+    ]:
+        ax.scatter(lon[mask], lat[mask], s=22, c=color, marker=marker, lw=0.3,
+                   edgecolor="k", transform=ccrs.PlateCarree(),
+                   label="%s (%d)" % (name, mask.sum()), zorder=5)
     ax.set_title("(a) fa$\\leq10^{-5}$ 的 %d 个候选的地理分布" % len(rows), fontsize=12)
-    ax.legend(fontsize=9, loc="lower left", ncol=3)
+    ax.legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.04),
+              ncol=3, frameon=False)
 
     ax = fig.add_subplot(gs[1, 0])
     bins = np.linspace(0, 1, 51)
@@ -86,7 +114,8 @@ def main():
     ax.set_title("(d) 窗长分布", fontsize=10)
     ax.legend(fontsize=8)
 
-    fig.suptitle("SVOM/GRM 792 天全量搜索：显著候选里的三个群体", fontsize=13)
+    fig.suptitle("SVOM/GRM 792 天全量搜索：显著候选里的三个群体\n"
+             "（「其余候选」是扣掉前两类后剩下的，未做闪电关联）", fontsize=12)
     fig.savefig(args.output, dpi=140, bbox_inches="tight")
     print("wrote", args.output)
     for mask, name, _ in classes:

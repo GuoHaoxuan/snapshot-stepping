@@ -39,8 +39,8 @@ def main():
 
     keep = d["frac"] <= CUT
     sig = d["fa"] <= 1e-5
-    fig = plt.figure(figsize=(17, 7.6))
-    gs = fig.add_gridspec(2, 6, height_ratios=[1.5, 1], hspace=0.30, wspace=1.1)
+    fig = plt.figure(figsize=(17, 6.6))
+    gs = fig.add_gridspec(2, 6, height_ratios=[2.1, 1], hspace=0.34, wspace=1.1)
 
     # (a) 同时性比例的分布
     ax = fig.add_subplot(gs[0, 0:2])
@@ -86,13 +86,15 @@ def main():
 
     # (d)(e) 地理密度
     lon_edges = np.linspace(-180, 180, 73)
-    lat_edges = np.linspace(-30, 30, 25)
+    # 只画卫星到得了的纬度带：Fermi 轨道倾角 25.6°，候选实测落在 ±25.6°。
+    span = np.ceil(np.abs(d["lat"]).max()) + 3
+    lat_edges = np.linspace(-span, span, 25)
     for i, (mask, title, cmap) in enumerate([
         (~keep, "(d) 判为带电粒子的候选 (%d)" % (~keep).sum(), "Oranges"),
         (keep, "(e) 通过同时性判据的候选 (%d)" % keep.sum(), "Blues"),
     ]):
         ax = fig.add_subplot(gs[1, i * 3 : i * 3 + 3], projection=ccrs.PlateCarree())
-        ax.set_extent([-180, 180, -35, 35], crs=ccrs.PlateCarree())
+        ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
         hist, _, _ = np.histogram2d(d["lon"][mask], d["lat"][mask],
                                     bins=[lon_edges, lat_edges])
         pcm = ax.pcolormesh(lon_edges, lat_edges, hist.T, cmap=cmap,

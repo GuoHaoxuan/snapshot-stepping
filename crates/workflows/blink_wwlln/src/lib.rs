@@ -1,8 +1,7 @@
+use blink_core::traits::Instrument;
 use blink_core::types::{TemporalState, UnifiedSignal};
-use blink_hxmt_he::types::HxmtHe;
-use blink_lightning::{algorithms::coincidence_prob, database::get_lightnings};
+use blink_lightning::{algorithms::coincidence_prob, database::coverage, database::get_lightnings};
 use blink_load::load_all;
-// use blink_svom_grm::types::SvomGrm;
 use chrono::TimeDelta;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -24,7 +23,20 @@ pub const TRAIN_THRESHOLD: u32 = 34;
 #[derive(Serialize, Deserialize)]
 pub struct LightningInfo {
     pub associated: bool,
-    pub coincidence_probability: f64,
+    /// 偶合概率。覆盖外为 `None`——那里既没查也算不出，不是 0 也不是 1。
+    pub coincidence_probability: Option<f64>,
+    /// 候选时刻是否落在 WWLLN 库的覆盖区间内。
+    ///
+    /// 库止于 2024-12-31，而 SVOM 的候选到 2026-08——覆盖外的候选查出来必然
+    /// 是空，`associated` 于是恒为 false。那是"查不到"，不是"没有闪电"，
+    /// 下游不能把两者当成一回事。旧的 tgfs.json 没有这一列，读回时按 true
+    /// 处理：HXMT 的搜索范围整个落在覆盖内。
+    #[serde(default = "covered_by_default")]
+    pub in_coverage: bool,
+}
+
+fn covered_by_default() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize)]
@@ -74,8 +86,28 @@ fn train_neighbor_counts(signals: &[UnifiedSignal]) -> Vec<u32> {
 
 /// 对单个候选做 WWLLN 闪电关联 + 虚警概率。每次调用的两个 `get_lightnings`
 /// 查询走线程本地只读连接（见 blink_lightning::database），可安全并行。
-fn associate(signal: &UnifiedSignal, neighbors_10min: u32) -> Tgf {
+fn associate(
+    signal: &UnifiedSignal,
+    neighbors_10min: u32,
+    coverage: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
+) -> Tgf {
     let peak_time = signal.peak_time();
+    let in_coverage = peak_time >= coverage.0 && peak_time <= coverage.1;
+    if !in_coverage {
+        // 覆盖外就不查了：查也是空，白付两次百万级检索的代价。
+        return Tgf {
+            signal: signal.clone(),
+            lightning: LightningInfo {
+                associated: false,
+                coincidence_probability: None,
+                in_coverage: false,
+            },
+            train: TrainInfo {
+                neighbors_10min,
+                is_train: neighbors_10min > TRAIN_THRESHOLD,
+            },
+        };
+    }
     let position = TemporalState {
         timestamp: peak_time,
         state: signal.position.clone(),
@@ -98,12 +130,13 @@ fn associate(signal: &UnifiedSignal, neighbors_10min: u32) -> Tgf {
         signal: signal.clone(),
         lightning: LightningInfo {
             associated: !lightnings.is_empty(),
-            coincidence_probability: coincidence_prob(
+            in_coverage: true,
+            coincidence_probability: Some(coincidence_prob(
                 &position,
-                TimeDelta::milliseconds(5),
-                Length::new::<uom::si::length::kilometer>(800.0),
+                TimeDelta::milliseconds(ASSOCIATION_MILLISECONDS),
+                Length::new::<uom::si::length::kilometer>(ASSOCIATION_KILOMETERS),
                 TimeDelta::minutes(2),
-            ),
+            )),
         },
         train: TrainInfo {
             neighbors_10min,
@@ -112,13 +145,37 @@ fn associate(signal: &UnifiedSignal, neighbors_10min: u32) -> Tgf {
     }
 }
 
-pub fn run() {
-    let signals = load_all::<HxmtHe>();
+/// 关联窗口。±5 ms 与 800 km 是 HXMT 上定标的：800 km 约合 550 km 轨道高度
+/// 下的可见地平，5 ms 覆盖光行时差与两边的计时不确定度。SVOM 轨道高约
+/// 625 km、GBM 约 535 km，几何上同量级，先沿用同一组值；哪颗星要单独定标，
+/// 得先有它自己的认证样本。
+const ASSOCIATION_MILLISECONDS: i64 = 5;
+const ASSOCIATION_KILOMETERS: f64 = 800.0;
+
+pub fn run<I: Instrument>() {
+    let signals = load_all::<I>();
     let total = signals.len();
-    eprintln!("filter: {total} candidates to associate");
+    eprintln!("filter: {} candidates to associate ({})", total, I::name());
 
     // 列车密度在全量池上一次算完（排序 + 二分，O(n log n)），并行阶段按
     // 下标取用即可。
+    let coverage = coverage();
+    eprintln!(
+        "filter: WWLLN coverage {} .. {}",
+        coverage.0.format("%Y-%m-%d"),
+        coverage.1.format("%Y-%m-%d")
+    );
+    let n_outside = signals
+        .iter()
+        .filter(|s| s.peak_time() < coverage.0 || s.peak_time() > coverage.1)
+        .count();
+    if n_outside > 0 {
+        eprintln!(
+            "filter: {n_outside}/{total} candidates fall outside it and are left unqueried \
+             (in_coverage = false, not `no lightning`)"
+        );
+    }
+
     let neighbor_counts = train_neighbor_counts(&signals);
     let n_train = neighbor_counts
         .iter()
@@ -150,7 +207,7 @@ pub fn run() {
                         if i >= total {
                             break;
                         }
-                        local.push((i, associate(&signals_ref[i], counts_ref[i])));
+                        local.push((i, associate(&signals_ref[i], counts_ref[i], coverage)));
                         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                         if n % 100_000 == 0 {
                             eprintln!("filter: {n}/{total}");

@@ -35,7 +35,11 @@ pub enum TopCommands {
         instrument: Instrument,
     },
     /// WWLLN lightning association + REP train-density enrichment for detected signals
-    Wwlln,
+    Wwlln {
+        /// Instrument whose candidates to enrich
+        #[arg(long, value_enum, default_value_t = Instrument::HxmtHe)]
+        instrument: Instrument,
+    },
     /// Recompute per-candidate ACD coincidence counts from 1K events (offline audit;
     /// needs 1K archive access). Input: CSV with `start`/`stop` columns (UTC or MET),
     /// e.g. sig_all_v5.csv as-is. Output: input columns + n,n_acd,n_acd_multi,n_bg,n_acd_bg

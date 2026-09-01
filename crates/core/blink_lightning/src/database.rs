@@ -26,6 +26,32 @@ fn open_connection() -> Connection {
     conn
 }
 
+/// 库里最早与最晚一条闪电的时刻。
+///
+/// 用来把"这一刻库里没有闪电"和"这一刻库根本没有数据"分开——库目前止于
+/// 2024-12-31，而 SVOM 的候选到 2026 年，落在覆盖外的候选查出来必然是空，
+/// 那不是没有闪电。
+///
+/// 走 `ORDER BY ... LIMIT 1` 而不是 `min()`/`max()`：后者在这个 422 GB 的表上
+/// 进不了索引，实测跑 200 s 还没回来；前者是纯索引扫描，几十毫秒。
+pub fn coverage() -> (DateTime<Utc>, DateTime<Utc>) {
+    LIGHTNING_CONNECTION.with(|connection| {
+        let bound = |order: &str| -> DateTime<Utc> {
+            let text: String = connection
+                .query_row(
+                    &format!("SELECT time FROM lightning ORDER BY time {order} LIMIT 1"),
+                    [],
+                    |row| row.get(0),
+                )
+                .expect("WWLLN database is empty");
+            NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S%.6f")
+                .expect("unparseable time in WWLLN database")
+                .and_utc()
+        };
+        (bound("ASC"), bound("DESC"))
+    })
+}
+
 pub fn get_lightnings(time_start: DateTime<Utc>, time_end: DateTime<Utc>) -> Vec<Lightning> {
     let time_start_str = time_start.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
     let time_end_str = time_end.format("%Y-%m-%d %H:%M:%S%.6f").to_string();

@@ -20,6 +20,8 @@ pub struct Chunk {
     /// 本小时实际到齐的探测器类型，顺序即分组下标。
     pub groups: Vec<Detector>,
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 因同一时间戳上挤了太多计数而被判为带电粒子、丢掉的候选数。
+    pub(super) dropped_simultaneous: AtomicUsize,
 }
 
 impl blink_core::traits::Chunk for Chunk {
@@ -85,6 +87,10 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let simultaneous = self.dropped_simultaneous.load(Ordering::Relaxed);
+        if simultaneous > 0 {
+            diagnostics.push(("dropped_simultaneous", simultaneous as f64));
         }
         diagnostics
     }

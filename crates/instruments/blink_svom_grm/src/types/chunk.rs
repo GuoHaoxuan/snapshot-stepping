@@ -28,6 +28,11 @@ pub struct Chunk {
     /// GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s（实测），
     /// 落在那一截里的候选只能丢——但要计数，不能静默。
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 本小时因落在 GTI 之外而没有进入搜索的事例数，由 `search` 写入。
+    /// 正常一小时是 SAA 缺口两端的两截半秒，合计几千到几万个。
+    pub(super) events_outside_gti: AtomicUsize,
+    /// 本小时因本底窗伸进 GTI 缺口而否决的候选数，由 `search` 写入。
+    pub(super) dropped_near_gti_edge: AtomicUsize,
 }
 
 impl blink_core::traits::Chunk for Chunk {
@@ -65,7 +70,8 @@ impl blink_core::traits::Chunk for Chunk {
     /// 曝光核算走 L1B 的 GTI。GRM 的小时文件并不覆盖整点到整点：实测
     /// 2025-09-19 全天 GTI 合计只有 86400 s 的 85.3%，单个小时低到 1778 s。
     /// 缺口全部落在南大西洋异常区，即 GTI 已经把 SAA 排除掉了，所以这里
-    /// 不需要再叠一层 SAA 掩模。
+    /// 不需要再叠一层 SAA 掩模。事例流在 `search` 里也按同一份 GTI 过滤，
+    /// 分子分母口径一致。
     fn coverage(&self) -> Coverage {
         let (start, stop) = (self.span[0].met(), self.span[1].met());
         // 相邻小时文件系统性重叠 100 s（TSTART = 整点 − 100 s），故 GTI 要
@@ -90,6 +96,14 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let outside = self.events_outside_gti.load(Ordering::Relaxed);
+        if outside > 0 {
+            diagnostics.push(("events_outside_gti", outside as f64));
+        }
+        let near_edge = self.dropped_near_gti_edge.load(Ordering::Relaxed);
+        if near_edge > 0 {
+            diagnostics.push(("dropped_near_gti_edge", near_edge as f64));
         }
         diagnostics
     }

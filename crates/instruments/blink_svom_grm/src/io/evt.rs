@@ -64,6 +64,16 @@ impl EvtFile {
         self.gti.seconds_within(from, to)
     }
 
+    /// `time` 是否在本文件的 GTI 内，见 `GtiHdu::contains`。
+    pub fn gti_contains(&self, time: f64) -> bool {
+        self.gti.contains(time)
+    }
+
+    /// `[from, to]` 是否整个落在同一个 GTI 段内，见 `GtiHdu::covers`。
+    pub fn gti_covers(&self, from: f64, to: f64) -> bool {
+        self.gti.covers(from, to)
+    }
+
     /// 三路事例表合计的时间回跳统计，见 `TimeReversals`。
     pub fn time_reversals(&self) -> TimeReversals {
         self.time_reversals

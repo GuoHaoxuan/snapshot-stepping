@@ -26,5 +26,7 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
         evt_file,
         orb_file,
         dropped_no_ephemeris: Default::default(),
+        events_outside_gti: Default::default(),
+        dropped_near_gti_edge: Default::default(),
     })
 }

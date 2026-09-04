@@ -22,6 +22,10 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 它们就是全量结果里的「1 Hz 假信号」（缺口离开侧，相位锁在 0.505 s 只是
     // 整秒边界减 0.495 s 的投影）和「高本底」（缺口进入侧）两类。只筛 FLAG 不够：
     // 进入侧那半秒 FLAG=0。丢掉的事例计数，见 `diagnostics`。
+    //
+    // 过滤只修分子。分母（本底窗的时长）由 `search_new` 按同一份 GTI 夹到
+    // 活时间里，否则紧挨缺口的好数据的本底窗仍会伸进空区——SAA 停机前是
+    // 130–210 kc/s 的平台后硬切断，那里的候选本底会被压低一半。
     let mut n_outside_gti = 0usize;
     let mut events = chunk
         .evt_file
@@ -39,16 +43,22 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 原样传了出来，而 search_new 假定输入有序。幅度大到有害的回跳已在
     // `exclusion` 挡掉，剩下的排一下就干净了——数组本来就基本有序，代价很低。
     events.sort();
-    let neighbor = Time::new::<uom::si::time::second>(1.0);
+    let gti: Vec<[MissionElapsedTime<SvomGrm>; 2]> = chunk
+        .evt_file
+        .gti_segments()
+        .into_iter()
+        .map(|(start, stop)| [MissionElapsedTime::new(start), MissionElapsedTime::new(stop)])
+        .collect();
     let results = search_new(
         &events,
         1,
         chunk.span[0],
         chunk.span[1],
+        &gti,
         SearchConfig {
             min_duration: Time::new::<uom::si::time::microsecond>(0.0),
             max_duration: Time::new::<uom::si::time::millisecond>(1.0),
-            neighbor,
+            neighbor: Time::new::<uom::si::time::second>(1.0),
             hollow: Time::new::<uom::si::time::millisecond>(10.0),
             false_positive_per_year: 20.0,
             min_number: 8,
@@ -62,20 +72,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<SvomGrm>, Position>::from(&chunk.orb_file);
 
     let mut n_dropped = 0usize;
-    let mut n_near_edge = 0usize;
     let signals = results
         .into_iter()
         .filter_map(|candidate| {
-            // 本底窗（候选两侧各 neighbor/2）必须整个落在一段 GTI 里。
-            // 事例已按 GTI 过滤，但本底估计按墙钟时长归一，窗子伸进缺口就等于
-            // 分子少一半、分母不变——在 SAA 停机前 130–210 kc/s 的平台上，这点
-            // 偏置足以把普通计数变成 fa=1e-10。见 `GtiHdu::covers`。
-            let window_start = (candidate.start - neighbor / 2.0).met();
-            let window_stop = (candidate.stop + neighbor / 2.0).met();
-            if !chunk.evt_file.gti_covers(window_start, window_stop) {
-                n_near_edge += 1;
-                return None;
-            }
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s，那一截里的
             // 候选取不到星历。丢可以，静默丢不行——记账见 `diagnostics`。
@@ -111,9 +110,6 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .events_outside_gti
         .store(n_outside_gti, Ordering::Relaxed);
-    chunk
-        .dropped_near_gti_edge
-        .store(n_near_edge, Ordering::Relaxed);
 
     signals
 }

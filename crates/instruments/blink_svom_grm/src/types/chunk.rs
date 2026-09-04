@@ -31,8 +31,6 @@ pub struct Chunk {
     /// 本小时因落在 GTI 之外而没有进入搜索的事例数，由 `search` 写入。
     /// 正常一小时是 SAA 缺口两端的两截半秒，合计几千到几万个。
     pub(super) events_outside_gti: AtomicUsize,
-    /// 本小时因本底窗伸进 GTI 缺口而否决的候选数，由 `search` 写入。
-    pub(super) dropped_near_gti_edge: AtomicUsize,
 }
 
 impl blink_core::traits::Chunk for Chunk {
@@ -100,10 +98,6 @@ impl blink_core::traits::Chunk for Chunk {
         let outside = self.events_outside_gti.load(Ordering::Relaxed);
         if outside > 0 {
             diagnostics.push(("events_outside_gti", outside as f64));
-        }
-        let near_edge = self.dropped_near_gti_edge.load(Ordering::Relaxed);
-        if near_edge > 0 {
-            diagnostics.push(("dropped_near_gti_edge", near_edge as f64));
         }
         diagnostics
     }

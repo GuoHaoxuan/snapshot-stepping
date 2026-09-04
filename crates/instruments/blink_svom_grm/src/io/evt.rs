@@ -69,9 +69,9 @@ impl EvtFile {
         self.gti.contains(time)
     }
 
-    /// `[from, to]` 是否整个落在同一个 GTI 段内，见 `GtiHdu::covers`。
-    pub fn gti_covers(&self, from: f64, to: f64) -> bool {
-        self.gti.covers(from, to)
+    /// GTI 段 `(start, stop)`，按时间排好。
+    pub fn gti_segments(&self) -> Vec<(f64, f64)> {
+        self.gti.start.iter().copied().zip(self.gti.stop.iter().copied()).collect()
     }
 
     /// 三路事例表合计的时间回跳统计，见 `TimeReversals`。

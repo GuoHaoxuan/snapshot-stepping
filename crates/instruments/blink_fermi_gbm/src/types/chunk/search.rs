@@ -85,6 +85,8 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
         chunk.groups.len(),
         chunk.span[0],
         chunk.span[1],
+        // 整小时当活时间：与按 chunk 边界夹取的原行为逐位相同。
+        &[[chunk.span[0], chunk.span[1]]],
         SearchConfig {
             min_duration: Time::new::<uom::si::time::microsecond>(0.0),
             max_duration: Time::new::<uom::si::time::millisecond>(1.0),

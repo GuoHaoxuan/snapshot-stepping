@@ -34,21 +34,6 @@ impl GtiHdu {
             .any(|(start, stop)| time >= *start && time <= *stop)
     }
 
-    /// `[from, to]` 是否整个落在同一个 GTI 段内。
-    ///
-    /// 搜索的本底窗是候选两侧各 `neighbor/2`，按墙钟时长归一；窗子一旦伸进
-    /// GTI 缺口，分子少了半截、分母没少，本底就被压低。这在正常速率下无关
-    /// 紧要，但 SAA 停机前的速率是 130–210 kc/s（不是斜坡，是平台后硬切断），
-    /// 期望 100 压到 48，普通计数就成了 fa=1e-10 的假触发——实测把 GTI 外事例
-    /// 过滤掉之后，一天里新冒出 89 个候选，全在各 GTI 停止点之前 0.25 s 内。
-    /// 所以本底窗必须整个在一段 GTI 里，否则候选不可信。
-    pub fn covers(&self, from: f64, to: f64) -> bool {
-        self.start
-            .iter()
-            .zip(self.stop.iter())
-            .any(|(start, stop)| from >= *start && to <= *stop)
-    }
-
     /// GTI 与 `[from, to]` 的交集长度（秒）。
     pub fn seconds_within(&self, from: f64, to: f64) -> f64 {
         self.start
@@ -130,27 +115,5 @@ mod tests {
     #[test]
     fn empty_gti_contains_nothing() {
         assert!(!gti(&[]).contains(100.0));
-    }
-
-    #[test]
-    fn a_window_inside_one_segment_is_covered() {
-        let hour = gti(&[(0.0, 1000.0), (2500.0, 3600.0)]);
-        assert!(hour.covers(100.0, 101.0));
-        assert!(hour.covers(0.0, 1000.0));
-    }
-
-    #[test]
-    fn a_window_reaching_into_the_gap_is_not_covered() {
-        // 候选在停机前 0.2 s，本底窗 ±0.5 s 伸进了缺口
-        let hour = gti(&[(0.0, 1000.0), (2500.0, 3600.0)]);
-        assert!(!hour.covers(999.3, 1000.3));
-        assert!(!hour.covers(2499.8, 2500.8));
-        // 跨两段更不行，哪怕两端各自都在段内
-        assert!(!hour.covers(999.0, 2501.0));
-    }
-
-    #[test]
-    fn empty_gti_covers_nothing() {
-        assert!(!gti(&[]).covers(0.0, 1.0));
     }
 }

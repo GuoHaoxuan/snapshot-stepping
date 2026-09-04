@@ -82,11 +82,21 @@ pub fn poisson_isf(p: f64, lambda: f64) -> u32 {
     k
 }
 
+/// `gti`：活时间段，按时间排好、互不重叠。本底窗（候选两侧各 `neighbor/2`）
+/// 与空窗（各 `hollow/2`）都夹到候选所在的那一段里再算时长，所以本底率的分母
+/// 只数活时间。传 `[[start, stop]]` 一段即等价于原先按 chunk 边界夹取的行为，
+/// 算术逐位相同。
+///
+/// 不这样做的后果实测过：SVOM 在 SAA 停机前是 130–210 kc/s 的平台后硬切断，
+/// 停机前半秒内候选的本底窗一半伸进空区，分子少一半、分母按墙钟不变，期望从
+/// 约 100 压到 48，普通计数就成了 fa=1e-10——一天冒出 89 个这样的假候选。
+/// 分子不必动：事例流本来就该按 GTI 过滤，计数只来自活时间。
 pub fn search_new<E: Event>(
     data: &[E],
     group_number: usize,
     start: MissionElapsedTime<E::Instrument>,
     stop: MissionElapsedTime<E::Instrument>,
+    gti: &[[MissionElapsedTime<E::Instrument>; 2]],
     config: SearchConfig,
 ) -> Vec<Candidate<E::Instrument>> {
     let mut result: Vec<Candidate<E::Instrument>> = Vec::new();
@@ -139,7 +149,24 @@ pub fn search_new<E: Event>(
     // 符合判据要挑第 N 小的组 p 值，这块缓冲同样只分配一次。
     let mut group_fps: Vec<f64> = vec![0.0; group_number];
 
+    // cursor 所在的活时间段。段按时间排好、cursor 单调前进，下标只增不减；
+    // 每个 cursor 位置只算一次，内层循环里的四次夹取仍是原来那四次比较。
+    // 候选窗最长 max_duration，远短于任何缺口，不会跨段。cursor 落在段外
+    // （事例没按 GTI 过滤时会发生）就退回 chunk 边界，即原先的行为。
+    let mut segment = 0usize;
+
     loop {
+        let cursor_time = data[cursor].time();
+        while segment + 1 < gti.len() && gti[segment + 1][0] <= cursor_time {
+            segment += 1;
+        }
+        let (live_start, live_stop) = match gti.get(segment) {
+            Some(seg) if seg[0] <= cursor_time && cursor_time <= seg[1] => {
+                (seg[0].max(start), seg[1].min(stop))
+            }
+            _ => (start, stop),
+        };
+
         let mut step = 0;
         numbers.fill(0);
         numbers[data[cursor].group() as usize] = 1;
@@ -156,10 +183,14 @@ pub fn search_new<E: Event>(
             debug_assert_eq!(total_number, numbers.iter().sum::<u32>());
             let duration = data[cursor + step].time() - data[cursor].time();
             if total_number >= config.min_number && duration >= config.min_duration {
-                let mean_start_time = (data[cursor].time() - config.neighbor / 2.0).max(start);
-                let mean_stop_time = (data[cursor + step].time() + config.neighbor / 2.0).min(stop);
-                let hollow_start_time = (data[cursor].time() - config.hollow / 2.0).max(start);
-                let hollow_stop_time = (data[cursor + step].time() + config.hollow / 2.0).min(stop);
+                let mean_start_time =
+                    (data[cursor].time() - config.neighbor / 2.0).max(live_start);
+                let mean_stop_time =
+                    (data[cursor + step].time() + config.neighbor / 2.0).min(live_stop);
+                let hollow_start_time =
+                    (data[cursor].time() - config.hollow / 2.0).max(live_start);
+                let hollow_stop_time =
+                    (data[cursor + step].time() + config.hollow / 2.0).min(live_stop);
                 let pure_mean_duration =
                     (mean_stop_time - mean_start_time) - (hollow_stop_time - hollow_start_time);
                 let pure_mean_percent =
@@ -429,6 +460,7 @@ mod tests {
             group_number,
             MissionElapsedTime::<TestInstrument>::new(0.0),
             MissionElapsedTime::<TestInstrument>::new(3600.0),
+            &whole_span(),
             SearchConfig {
                 coincidence,
                 ..SearchConfig::default()
@@ -464,8 +496,69 @@ mod tests {
             1,
             MissionElapsedTime::<TestInstrument>::new(0.0),
             MissionElapsedTime::<TestInstrument>::new(3600.0),
+            &whole_span(),
             SearchConfig::default(),
         )
+    }
+
+    fn met(seconds: f64) -> MissionElapsedTime<TestInstrument> {
+        MissionElapsedTime::new(seconds)
+    }
+
+    /// 整个 [0, 3600] 当活时间——即原先按 chunk 边界夹取的行为。
+    fn whole_span() -> Vec<[MissionElapsedTime<TestInstrument>; 2]> {
+        vec![[met(0.0), met(3600.0)]]
+    }
+
+    /// 每 0.5 µs 一个事例、只铺在 [10.000, 10.003] s 上：前面是空的，然后是
+    /// 一块平台，正是 SAA 停机前那种形态（缩小版）。
+    fn plateau_after_a_gap() -> Vec<TestEvent> {
+        at(&(0..6000).map(|i| 10.0 + i as f64 * 5e-7).collect::<Vec<_>>())
+    }
+
+    fn run_with_live(
+        data: &[TestEvent],
+        gti: &[[f64; 2]],
+    ) -> Vec<crate::types::candidate::Candidate<TestInstrument>> {
+        let gti: Vec<[MissionElapsedTime<TestInstrument>; 2]> =
+            gti.iter().map(|s| [met(s[0]), met(s[1])]).collect();
+        search_new(
+            data,
+            1,
+            met(0.0),
+            met(3600.0),
+            &gti,
+            SearchConfig {
+                min_duration: Time::new::<uom::si::time::microsecond>(0.0),
+                max_duration: Time::new::<uom::si::time::microsecond>(100.0),
+                neighbor: Time::new::<uom::si::time::millisecond>(4.0),
+                hollow: Time::new::<uom::si::time::microsecond>(100.0),
+                false_positive_per_year: 20.0,
+                min_number: 8,
+                coincidence: 1,
+            },
+        )
+    }
+
+    #[test]
+    fn a_flat_plateau_next_to_a_gap_only_triggers_when_the_gap_is_counted_as_live() {
+        let data = plateau_after_a_gap();
+        // 把空区也当活时间（原先的行为）：平台头 2 ms 内的候选本底窗一半在空区，
+        // 均值减半，200 个计数对期望 100，平台自己就触发。
+        assert!(!run_with_live(&data, &[[0.0, 3600.0]]).is_empty());
+        // 按活时间归一：期望就是 200，平台只是平台。
+        assert!(run_with_live(&data, &[[10.0, 10.003]]).is_empty());
+    }
+
+    #[test]
+    fn a_burst_right_after_a_gap_is_still_found() {
+        // 平台上在恢复后 0.5 ms 处再塞 60 个事例进 30 µs：期望 60，实测 120。
+        let mut data = plateau_after_a_gap();
+        data.extend(at(&(0..60).map(|i| 10.0005 + i as f64 * 5e-7).collect::<Vec<_>>()));
+        data.sort_by(|a, b| a.seconds.partial_cmp(&b.seconds).unwrap());
+        let found = run_with_live(&data, &[[10.0, 10.003]]);
+        assert_eq!(found.len(), 1);
+        assert!((found[0].start.met() - 10.0005).abs() < 1e-4);
     }
 
     #[test]

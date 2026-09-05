@@ -2,10 +2,13 @@
 //!
 //! 输入任意带 `start`/`stop` 列（UTC ISO 或 MET 数字）的 CSV——
 //! `sig_all_v5.csv` 原样可用；输出保留全部输入列，追加
-//! `n,n_acd,n_acd_multi,n_bg,n_acd_bg` 五列原始计数。
+//! `n,n_acd,n_acd_multi,n_bg,n_acd_bg` 五列原始计数，以及 `det_share_max`——
+//! 窗内贡献最多的那个探头占窗内事例数的比例（单路毛刺判据的审计量，
+//! 这里按候选的 start/stop 整窗算，搜索里按最显著一格算）。
 //! 事例选择与窗口定义复用搜索侧同一实现（`blink_hxmt_he::algorithms::acd`），
 //! 两边数字可直接互校。需在能访问 1K 档案的机器上运行。
 
+use blink_algorithms::detector_share::max_detector_fraction;
 use blink_core::traits::Event as _;
 use blink_core::types::MissionElapsedTime;
 use blink_hxmt_he::algorithms::acd::acd_counts;
@@ -61,6 +64,7 @@ pub fn cmd_acd_audit(list: &Path, out: &Path, scint: &str) {
         line: &'a str,
         window: Option<(f64, f64)>,
         counts: Option<blink_core::types::AcdCounts>,
+        det_share_max: Option<f64>,
     }
     let mut rows: Vec<Row> = lines
         .filter(|line| !line.trim().is_empty())
@@ -74,6 +78,7 @@ pub fn cmd_acd_audit(list: &Path, out: &Path, scint: &str) {
                 line,
                 window,
                 counts: None,
+                det_share_max: None,
             }
         })
         .collect();
@@ -107,6 +112,12 @@ pub fn cmd_acd_audit(list: &Path, out: &Path, scint: &str) {
         for index in indices {
             let (start, stop) = rows[index].window.expect("grouped rows have windows");
             rows[index].counts = Some(acd_counts(&events, start, stop));
+            rows[index].det_share_max = Some(max_detector_fraction(
+                &events,
+                MissionElapsedTime::new(start),
+                MissionElapsedTime::new(stop),
+                |e| e.detector.id,
+            ));
         }
         if (i + 1) % 50 == 0 || i + 1 == n_hours {
             eprintln!("acd-audit: {}/{n_hours} hours", i + 1);
@@ -115,18 +126,23 @@ pub fn cmd_acd_audit(list: &Path, out: &Path, scint: &str) {
 
     let mut output = String::with_capacity(content.len() * 2);
     output.push_str(header);
-    output.push_str(",n,n_acd,n_acd_multi,n_bg,n_acd_bg\n");
+    output.push_str(",n,n_acd,n_acd_multi,n_bg,n_acd_bg,det_share_max\n");
     let mut n_unresolved = 0usize;
     for row in &rows {
         output.push_str(row.line);
         match &row.counts {
             Some(c) => output.push_str(&format!(
-                ",{},{},{},{},{}\n",
-                c.n, c.n_acd, c.n_acd_multi, c.n_bg, c.n_acd_bg
+                ",{},{},{},{},{},{:.3}\n",
+                c.n,
+                c.n_acd,
+                c.n_acd_multi,
+                c.n_bg,
+                c.n_acd_bg,
+                row.det_share_max.unwrap_or(f64::NAN)
             )),
             None => {
                 n_unresolved += 1;
-                output.push_str(",,,,,\n");
+                output.push_str(",,,,,,\n");
             }
         }
     }

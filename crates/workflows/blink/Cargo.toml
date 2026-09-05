@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+blink_algorithms = { version = "0.1.0", path = "../../core/blink_algorithms" }
 blink_core = { version = "0.1.0", path = "../../core/blink_core" }
 blink_wwlln = { version = "0.1.0", path = "../blink_wwlln" }
 blink_fermi_gbm = { version = "0.1.0", path = "../../instruments/blink_fermi_gbm" }

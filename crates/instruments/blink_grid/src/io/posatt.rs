@@ -56,14 +56,22 @@ impl PosAttFile {
     }
 }
 
-/// 位姿文件 1 Hz 采样；允许插值跨越的最大采样间隔（s）。
+/// 允许插值跨越的最大采样间隔（s）。
 ///
-/// 姿态解和位置解都会整段缺失：GRID-02 2020-11-21 的姿态 92% 是 NaN，成段
+/// 位姿文件的采样不是一律 1 Hz：GRID-03B/04/07 是 1 s，GRID-02 全程 10 s，03B
+/// 有些过境也是 10 s（2022-10-01 占 7%）。用 3 s 做门槛时 GRID-02 的候选一个都
+/// 定不了位（v5 全量 51 个全进了 `dropped_no_ephemeris`）。
+///
+/// 姿态解和位置解又都会整段缺失：GRID-02 2020-11-21 的姿态 92% 是 NaN，成段
 /// 154–177 s；GRID-03B 2022-10-01 有 6 段各 74 s。去掉 NaN 行以后，缺失段两头
 /// 的有效行会被 `Trajectory::interpolate` 当成相邻点连成直线——把几分钟的翻滚
-/// 或轨道弧当直线，比丢掉更糟。所以只在两个采样点相隔不超过这个值时才插值，
-/// 容忍零星掉一两秒。
-const MAX_SAMPLE_GAP_SECONDS: f64 = 3.0;
+/// 或轨道弧当直线，比丢掉更糟。
+///
+/// 30 s 把两者分开：10 s 的采样在容忍之内，最短的缺失段（74 s）和过境之间的空
+/// 档都在外面。30 s 内把轨道弧当直线的位置误差约 1 km（弓高 Rθ²/8，θ = 30 s ×
+/// 1.1 mrad/s），对 800 km 的闪电关联半径无关紧要；姿态在 30 s 内线性插值只
+/// 是元数据精度的问题，候选本身不依赖它。
+const MAX_SAMPLE_GAP_SECONDS: f64 = 30.0;
 
 /// 在采样密度正常的段内插值；落在缺失段里（两侧有效采样相隔超过
 /// [`MAX_SAMPLE_GAP_SECONDS`]）返回 `None`，由上层记账。
@@ -185,6 +193,15 @@ mod tests {
         let traj = position_trajectory::<Sat02>(&[file(&rows)]);
         let p = interpolate_sampled(&traj, MissionElapsedTime::new(5.0)).unwrap();
         assert!((p.latitude - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_ten_second_cadence_is_interpolated() {
+        // GRID-02 的位姿全程 10 s 一采
+        let rows: Vec<(f64, f32, f32)> = (0..10).map(|i| (10.0 * i as f64, 0.1, i as f32)).collect();
+        let traj = position_trajectory::<Sat02>(&[file(&rows)]);
+        let p = interpolate_sampled(&traj, MissionElapsedTime::new(45.0)).unwrap();
+        assert!((p.latitude - 4.5).abs() < 1e-9);
     }
 
     #[test]

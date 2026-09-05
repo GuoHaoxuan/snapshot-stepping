@@ -309,4 +309,12 @@ pub enum Instrument {
     SvomGrm,
     /// Fermi/GBM（continuous TTE，NaI 与 BGO 分组）
     FermiGbm,
+    /// 天格 GRID-02（逐过境事例，2020-11 .. 2021-03）
+    Grid02,
+    /// 天格 GRID-03B（2022-03 .. 2024-08）
+    Grid03b,
+    /// 天格 GRID-04（2022-03 .. 2024-08）
+    Grid04,
+    /// 天格 GRID-07（2024-01 .. 2024-07）
+    Grid07,
 }

@@ -164,12 +164,28 @@ fn main() {
                         start, end, workers, worker,
                     )
                 }
+                Instrument::Grid02 => blink_search::search_range::<blink_grid::types::Grid02>(
+                    start, end, workers, worker,
+                ),
+                Instrument::Grid03b => blink_search::search_range::<blink_grid::types::Grid03B>(
+                    start, end, workers, worker,
+                ),
+                Instrument::Grid04 => blink_search::search_range::<blink_grid::types::Grid04>(
+                    start, end, workers, worker,
+                ),
+                Instrument::Grid07 => blink_search::search_range::<blink_grid::types::Grid07>(
+                    start, end, workers, worker,
+                ),
             }
         }
         TopCommands::Wwlln { instrument } => match instrument {
             Instrument::HxmtHe => blink_wwlln::run::<blink_hxmt_he::types::HxmtHe>(),
             Instrument::SvomGrm => blink_wwlln::run::<blink_svom_grm::types::SvomGrm>(),
             Instrument::FermiGbm => blink_wwlln::run::<blink_fermi_gbm::types::FermiGbm>(),
+            Instrument::Grid02 => blink_wwlln::run::<blink_grid::types::Grid02>(),
+            Instrument::Grid03b => blink_wwlln::run::<blink_grid::types::Grid03B>(),
+            Instrument::Grid04 => blink_wwlln::run::<blink_grid::types::Grid04>(),
+            Instrument::Grid07 => blink_wwlln::run::<blink_grid::types::Grid07>(),
         },
         TopCommands::AcdAudit { list, out, scint } => {
             commands::acd_audit::cmd_acd_audit(&list, &out, &scint);

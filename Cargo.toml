@@ -6,6 +6,7 @@ members = [
     "crates/core/blink_lightning",
     "crates/core/blink_solar",
     "crates/instruments/blink_fermi_gbm",
+    "crates/instruments/blink_grid",
     "crates/instruments/blink_hxmt_he",
     "crates/instruments/blink_svom_grm",
     "crates/workflows/blink",

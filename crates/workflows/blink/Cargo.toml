@@ -7,6 +7,7 @@ edition = "2024"
 blink_core = { version = "0.1.0", path = "../../core/blink_core" }
 blink_wwlln = { version = "0.1.0", path = "../blink_wwlln" }
 blink_fermi_gbm = { version = "0.1.0", path = "../../instruments/blink_fermi_gbm" }
+blink_grid = { version = "0.1.0", path = "../../instruments/blink_grid" }
 blink_hxmt_he = { version = "0.1.0", path = "../../instruments/blink_hxmt_he" }
 blink_search = { version = "0.1.0", path = "../blink_search" }
 blink_svom_grm = { version = "0.1.0", path = "../../instruments/blink_svom_grm" }

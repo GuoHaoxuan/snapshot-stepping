@@ -1,6 +1,7 @@
 use crate::types::Chunk;
 use crate::types::Event;
 use crate::types::SvomGrm;
+use blink_algorithms::detector_share::{MAX_DETECTOR_FRACTION, max_detector_fraction};
 use blink_algorithms::snapshot_stepping::SearchConfig;
 use blink_algorithms::snapshot_stepping::search_new;
 use blink_core::types::Attitude;
@@ -72,9 +73,21 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<SvomGrm>, Position>::from(&chunk.orb_file);
 
     let mut n_dropped = 0usize;
+    let mut n_single_detector = 0usize;
     let signals = results
         .into_iter()
         .filter_map(|candidate| {
+            // 单路毛刺否决：最显著一格里一路探测器占了绝大多数计数就不是暴发。
+            // 三个 GRD 朝向不同，但 v3 全量里占比 > 0.8 的 12 个覆盖内候选闪电关联 0 个，
+            // 占比 ≤ 0.6 的关联 42%。
+            let best_start = candidate.start + candidate.delay;
+            let best_stop = best_start + candidate.bin_size_best;
+            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector_id)
+                > MAX_DETECTOR_FRACTION
+            {
+                n_single_detector += 1;
+                return None;
+            }
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s，那一截里的
             // 候选取不到星历。丢可以，静默丢不行——记账见 `diagnostics`。
@@ -107,6 +120,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .dropped_single_detector
+        .store(n_single_detector, Ordering::Relaxed);
     chunk
         .events_outside_gti
         .store(n_outside_gti, Ordering::Relaxed);

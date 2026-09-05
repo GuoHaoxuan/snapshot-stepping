@@ -352,78 +352,8 @@ pub fn search_new<E: Event>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use blink_core::{
-        error::Error,
-        traits::{Chunk, Instrument},
-        types::{Coverage, Signal},
-    };
-    use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-    use serde::Serialize;
-    use std::sync::OnceLock;
 
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-    struct TestInstrument;
-
-    struct TestChunk;
-
-    impl Chunk for TestChunk {
-        type Event = TestEvent;
-
-        fn from_epoch(_: &DateTime<Utc>) -> Result<Self, Error> {
-            Err(Error::Unknown)
-        }
-        fn search(&self) -> Vec<Signal<Self::Event>> {
-            Vec::new()
-        }
-        fn last_modified(_: &DateTime<Utc>) -> Result<DateTime<Utc>, Error> {
-            Err(Error::Unknown)
-        }
-        fn coverage(&self) -> Coverage {
-            Coverage {
-                span_seconds: 0.0,
-                masked_seconds: 0.0,
-            }
-        }
-    }
-
-    impl Instrument for TestInstrument {
-        type Chunk = TestChunk;
-
-        fn ref_time() -> &'static DateTime<Utc> {
-            static REF_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();
-            REF_TIME.get_or_init(|| Utc.with_ymd_and_hms(2012, 1, 1, 0, 0, 0).unwrap())
-        }
-        fn launch_day() -> NaiveDate {
-            NaiveDate::from_ymd_opt(2017, 6, 15).unwrap()
-        }
-        fn name() -> &'static str {
-            "test"
-        }
-    }
-
-    #[derive(Serialize, Debug, Clone)]
-    struct TestEvent {
-        seconds: f64,
-        group: u8,
-    }
-
-    impl Event for TestEvent {
-        type Instrument = TestInstrument;
-        type ChannelType = u16;
-
-        fn time(&self) -> MissionElapsedTime<TestInstrument> {
-            MissionElapsedTime::new(self.seconds)
-        }
-        fn channel(&self) -> u16 {
-            100
-        }
-        fn group(&self) -> u8 {
-            self.group
-        }
-        fn keep(&self) -> bool {
-            true
-        }
-    }
+    use crate::test_support::{TestEvent, TestInstrument};
 
     fn at(seconds: &[f64]) -> Vec<TestEvent> {
         seconds

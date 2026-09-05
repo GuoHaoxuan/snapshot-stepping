@@ -31,6 +31,8 @@ pub struct Chunk {
     /// 本小时因为取不到姿态/轨道而丢掉的候选数，由 `search` 写入。
     /// 星历表两端已经会外推一小截，落到这里的是表真缺了一整段以上的情形。
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 最显著一格里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
+    pub(super) dropped_single_detector: AtomicUsize,
     /// 重复行占比缓存。体检和诊断都要它，而它是一遍全表扫描，只算一次。
     pub(super) duplicate_cache: OnceLock<Option<f64>>,
 }
@@ -106,6 +108,10 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let single = self.dropped_single_detector.load(Ordering::Relaxed);
+        if single > 0 {
+            diagnostics.push(("dropped_single_detector", single as f64));
         }
         // 逐小时粒子环境：kept 事例中 ACD 符合占比。REP/辐射带小时整体抬升，
         // 查异常天时不用回读事例表就能判断粒子环境脏不脏。

@@ -52,6 +52,7 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
         ],
         saturation_cache: OnceLock::new(),
         dropped_no_ephemeris: AtomicUsize::new(0),
+        dropped_single_detector: Default::default(),
         duplicate_cache: OnceLock::new(),
     })
 }

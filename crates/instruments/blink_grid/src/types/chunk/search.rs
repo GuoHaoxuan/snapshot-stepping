@@ -1,3 +1,4 @@
+use blink_algorithms::detector_share::{MAX_DETECTOR_FRACTION, max_detector_fraction};
 use blink_algorithms::snapshot_stepping::{SearchConfig, search_new};
 use blink_core::traits::Event as _;
 use blink_core::types::{MissionElapsedTime, Signal};
@@ -54,15 +55,6 @@ const RATE_CEILING: f64 = 5000.0;
 /// `OPEN-QUESTIONS.md` 第 10 条。
 const MAX_SIMULTANEOUS_FRACTION: f64 = 0.35;
 
-/// 最显著一格里单路探测器贡献的事例占比上限。
-///
-/// 四块 GAGG 并排朝同一方向，TGF 从下方照亮时四路均分：v3 全量 53 个显著候选里
-/// 真暴发的单路最大占比中位 0.36、最高 0.56。超过 0.9 的 3 个全是一路探测器自己
-/// 在闹（03B 2023-08-08T19:53:50 一路占 100%、PI 只有 6；2023-08-10 三分钟内两个
-/// 候选同一路占 90–95%）。0.56 与 0.90 之间一个候选都没有，门槛取 0.8：8 个计数里
-/// 7 个来自一路也否决。单组搜索没有组间符合，这是挡单路毛刺的唯一手段。
-const MAX_DETECTOR_FRACTION: f64 = 0.8;
-
 /// 本底窗 `[from, to]`（已夹到候选所在的 GTI 段内）里是否有读出空洞。
 ///
 /// `events` 已按时间排好。空段包括窗口两端到最近事例的距离——窗口已夹在
@@ -114,25 +106,6 @@ fn simultaneous_fraction<S: Satellite>(
         longest = longest.max(run);
     }
     longest as f64 / window.len() as f64
-}
-
-/// 最显著一格 `[start, stop]` 里贡献最多的那路探测器占该格事例数的比例。
-fn detector_fraction<S: Satellite>(
-    events: &[Event<S>],
-    start: MissionElapsedTime<Grid<S>>,
-    stop: MissionElapsedTime<Grid<S>>,
-) -> f64 {
-    let lo = events.partition_point(|e| e.time() < start);
-    let hi = events.partition_point(|e| e.time() <= stop);
-    let window = &events[lo..hi];
-    if window.is_empty() {
-        return 0.0;
-    }
-    let mut per_detector = [0usize; 4];
-    for e in window {
-        per_detector[(e.detector as usize).min(3)] += 1;
-    }
-    per_detector.into_iter().max().unwrap_or(0) as f64 / window.len() as f64
 }
 
 pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
@@ -237,7 +210,13 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
                 n_simultaneous += 1;
                 return None;
             }
-            if detector_fraction(&events, best_start, best_stop) > MAX_DETECTOR_FRACTION {
+            // 单路毛刺否决。四块 GAGG 并排同向，真暴发四路均分：v3 全量真候选的单路
+            // 最大占比中位 0.36、最高 0.56；超过 0.9 的 3 个全是一路探测器自己在闹
+            // （03B 2023-08-08T19:53:50 一路占 100%、PI 6；2023-08-10 三分钟内两个
+            // 候选同一路占 90–95%）。单组搜索没有组间符合，这是挡单路毛刺的唯一手段。
+            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector)
+                > MAX_DETECTOR_FRACTION
+            {
                 n_single_detector += 1;
                 return None;
             }
@@ -328,7 +307,12 @@ mod tests {
     }
 
     fn detector_share(events: &[Event<Sat03B>]) -> f64 {
-        detector_fraction(events, events[0].time(), events[events.len() - 1].time())
+        max_detector_fraction(
+            events,
+            events[0].time(),
+            events[events.len() - 1].time(),
+            |e| e.detector,
+        )
     }
 
     #[test]

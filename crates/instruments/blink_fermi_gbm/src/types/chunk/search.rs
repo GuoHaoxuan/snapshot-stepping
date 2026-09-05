@@ -1,3 +1,4 @@
+use blink_algorithms::detector_share::{MAX_DETECTOR_FRACTION, max_detector_fraction};
 use blink_algorithms::snapshot_stepping::{SearchConfig, search_new};
 use blink_core::traits::Event as _;
 use blink_core::types::{Attitude, MissionElapsedTime, Position, Signal, Trajectory};
@@ -103,6 +104,7 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<FermiGbm>, Position>::from(&chunk.poshist);
 
     let mut n_dropped = 0usize;
+    let mut n_single_detector = 0usize;
     let mut n_simultaneous = 0usize;
     let signals = results
         .into_iter()
@@ -118,6 +120,15 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 return None;
             }
 
+            // 单路毛刺否决：最显著一格里一路探测器占了绝大多数计数就不是暴发。
+            // 组间符合已经挡住只在 NaI 里的毛刺，试跑日没有候选超过 0.8；这里与其余
+            // 仪器口径一致。
+            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector)
+                > MAX_DETECTOR_FRACTION
+            {
+                n_single_detector += 1;
+                return None;
+            }
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             let (Some(attitude), Some(position)) =
                 (attitudes.interpolate(peak), positions.interpolate(peak))
@@ -147,6 +158,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .dropped_single_detector
+        .store(n_single_detector, Ordering::Relaxed);
     chunk
         .dropped_simultaneous
         .store(n_simultaneous, Ordering::Relaxed);

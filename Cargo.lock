@@ -95,6 +95,7 @@ checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 name = "blink"
 version = "0.1.0"
 dependencies = [
+ "blink_algorithms",
  "blink_core",
  "blink_fermi_gbm",
  "blink_grid",

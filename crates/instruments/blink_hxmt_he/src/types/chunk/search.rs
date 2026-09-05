@@ -58,12 +58,10 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let signals = results
         .into_iter()
         .filter_map(|candidate| {
-            // 单路毛刺否决：最显著一格里一路探测器占了绝大多数计数就不是暴发。
+            // 单路毛刺否决：候选窗里一路探测器占了绝大多数计数就不是暴发。
             // 18 路合成一路搜索，单个 PMT 的毛刺没有别的判据能挡。v6 目录是在没有这条
             // 判据时产出的，见 OPEN-QUESTIONS.md。
-            let best_start = candidate.start + candidate.delay;
-            let best_stop = best_start + candidate.bin_size_best;
-            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector.id)
+            if max_detector_fraction(&events, candidate.start, candidate.stop, |e| e.detector.id)
                 > MAX_DETECTOR_FRACTION
             {
                 n_single_detector += 1;

@@ -120,10 +120,10 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 return None;
             }
 
-            // 单路毛刺否决：最显著一格里一路探测器占了绝大多数计数就不是暴发。
+            // 单路毛刺否决：候选窗里一路探测器占了绝大多数计数就不是暴发。
             // 组间符合已经挡住只在 NaI 里的毛刺，试跑日没有候选超过 0.8；这里与其余
             // 仪器口径一致。
-            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector)
+            if max_detector_fraction(&events, candidate.start, candidate.stop, |e| e.detector)
                 > MAX_DETECTOR_FRACTION
             {
                 n_single_detector += 1;

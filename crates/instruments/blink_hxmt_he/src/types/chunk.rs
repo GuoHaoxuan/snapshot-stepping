@@ -31,7 +31,7 @@ pub struct Chunk {
     /// 本小时因为取不到姿态/轨道而丢掉的候选数，由 `search` 写入。
     /// 星历表两端已经会外推一小截，落到这里的是表真缺了一整段以上的情形。
     pub(super) dropped_no_ephemeris: AtomicUsize,
-    /// 最显著一格里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
+    /// 候选窗里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
     pub(super) dropped_single_detector: AtomicUsize,
     /// 重复行占比缓存。体检和诊断都要它，而它是一遍全表扫描，只算一次。
     pub(super) duplicate_cache: OnceLock<Option<f64>>,

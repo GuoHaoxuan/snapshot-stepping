@@ -214,7 +214,7 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
             // 最大占比中位 0.36、最高 0.56；超过 0.9 的 3 个全是一路探测器自己在闹
             // （03B 2023-08-08T19:53:50 一路占 100%、PI 6；2023-08-10 三分钟内两个
             // 候选同一路占 90–95%）。单组搜索没有组间符合，这是挡单路毛刺的唯一手段。
-            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector)
+            if max_detector_fraction(&events, candidate.start, candidate.stop, |e| e.detector)
                 > MAX_DETECTOR_FRACTION
             {
                 n_single_detector += 1;

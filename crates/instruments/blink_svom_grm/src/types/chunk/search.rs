@@ -77,12 +77,10 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let signals = results
         .into_iter()
         .filter_map(|candidate| {
-            // 单路毛刺否决：最显著一格里一路探测器占了绝大多数计数就不是暴发。
+            // 单路毛刺否决：候选窗里一路探测器占了绝大多数计数就不是暴发。
             // 三个 GRD 朝向不同，但 v3 全量里占比 > 0.8 的 12 个覆盖内候选闪电关联 0 个，
-            // 占比 ≤ 0.6 的关联 42%。
-            let best_start = candidate.start + candidate.delay;
-            let best_stop = best_start + candidate.bin_size_best;
-            if max_detector_fraction(&events, best_start, best_stop, |e| e.detector_id)
+            // 占比 ≤ 0.6 的关联 42%。按整窗算而不按最显著一格，见 `detector_share`。
+            if max_detector_fraction(&events, candidate.start, candidate.stop, |e| e.detector_id)
                 > MAX_DETECTOR_FRACTION
             {
                 n_single_detector += 1;

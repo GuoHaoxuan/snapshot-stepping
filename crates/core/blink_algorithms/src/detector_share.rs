@@ -5,19 +5,24 @@ use std::collections::BTreeMap;
 use blink_core::traits::Event;
 use blink_core::types::MissionElapsedTime;
 
-/// 最显著一格里单路探测器贡献的事例占比上限，四个仪器共用。
+/// 候选窗 `[start, stop]` 里单路探测器贡献的事例占比上限，四个仪器共用。
 ///
 /// 真暴发照亮整台仪器，实测真候选的单路最大占比都在 0.6 以下：GRID 四路并排
 /// 同向，v3 全量真候选中位 0.36、最高 0.56；SVOM 三个 GRD 朝向不同，占比 ≤ 0.6
 /// 的候选闪电关联 42%，> 0.8 的 12 个关联 0 个；GBM 试跑日过同时性判据的候选
 /// ≤ 0.6。单路毛刺则是 0.9–1.0（GRID 03B 2023-08-08 一路占 100%、PI 6；SVOM
 /// 2026-01-25 一路占 100%、60 个计数）。取 0.8：8 个计数里 7 个来自一路也否决。
+///
+/// 占比按整个候选窗算，不按最显著一格：毛刺从头到尾都是那一路，两种窗都抓得住；
+/// 弱的真暴发在最显著一格里只有几个计数，朝向最好的那路容易独占——SVOM 按最显
+/// 著一格算时砍掉的 14 个覆盖内候选里有 1 个关联着闪电（2024-12-05T04:22:12，
+/// 偶然概率 0.001），按整窗算它的占比只有 0.47。
 pub const MAX_DETECTOR_FRACTION: f64 = 0.8;
 
 /// 窗口 `[start, stop]` 里贡献最多的那路探测器占该窗事例数的比例。
 ///
 /// `events` 已按时间排好；`detector` 给出每个事例的探测器标识。两端都是事例本身
-/// 的时刻（`Candidate` 的 start 偏移 delay 得到最显著一格），闭区间比较。
+/// 的时刻（`Candidate` 的 start/stop），闭区间比较。
 pub fn max_detector_fraction<E: Event, K: Ord>(
     events: &[E],
     start: MissionElapsedTime<E::Instrument>,

@@ -32,6 +32,8 @@ pub struct Chunk<S: Satellite> {
     pub(super) dropped_simultaneous: AtomicUsize,
     /// 峰值时刻没有姿态解（位姿文件整段 NaN）而被丢弃的候选数，见 `search`
     pub(super) dropped_no_attitude: AtomicUsize,
+    /// 最显著一格里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
+    pub(super) dropped_single_detector: AtomicUsize,
     /// 读不出来（如 0 字节）而跳过的位姿文件数
     pub(super) posatt_unreadable: usize,
     _satellite: PhantomData<S>,
@@ -120,6 +122,10 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
         let no_attitude = self.dropped_no_attitude.load(Ordering::Relaxed);
         if no_attitude > 0 {
             d.push(("dropped_no_attitude", no_attitude as f64));
+        }
+        let single = self.dropped_single_detector.load(Ordering::Relaxed);
+        if single > 0 {
+            d.push(("dropped_single_detector", single as f64));
         }
         d
     }

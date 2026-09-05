@@ -5,6 +5,7 @@ G03_posatt_2203110707_2203110721_v03_02_00.fits
   1 Hz，与事例文件按过境一一对应。
 */
 
+use blink_core::traits::Interpolatable;
 use blink_core::types::{Attitude, MissionElapsedTime, Position, TemporalState, Trajectory};
 use uom::si::f64::*;
 use uom::si::length::meter;
@@ -55,7 +56,38 @@ impl PosAttFile {
     }
 }
 
-/// 把一批过境的姿态拼成一条轨迹（按时间排序）。
+/// 位姿文件 1 Hz 采样；允许插值跨越的最大采样间隔（s）。
+///
+/// 姿态解和位置解都会整段缺失：GRID-02 2020-11-21 的姿态 92% 是 NaN，成段
+/// 154–177 s；GRID-03B 2022-10-01 有 6 段各 74 s。去掉 NaN 行以后，缺失段两头
+/// 的有效行会被 `Trajectory::interpolate` 当成相邻点连成直线——把几分钟的翻滚
+/// 或轨道弧当直线，比丢掉更糟。所以只在两个采样点相隔不超过这个值时才插值，
+/// 容忍零星掉一两秒。
+const MAX_SAMPLE_GAP_SECONDS: f64 = 3.0;
+
+/// 在采样密度正常的段内插值；落在缺失段里（两侧有效采样相隔超过
+/// [`MAX_SAMPLE_GAP_SECONDS`]）返回 `None`，由上层记账。
+pub fn interpolate_sampled<S: Satellite, State: Interpolatable + Clone>(
+    trajectory: &Trajectory<MissionElapsedTime<Grid<S>>, State>,
+    time: MissionElapsedTime<Grid<S>>,
+) -> Option<State> {
+    let points = &trajectory.points;
+    if points.len() < 2 {
+        return None;
+    }
+    // 与 `Trajectory::interpolate` 取同一段：包住 time 的那段，两端之外夹到最近的一段
+    let i = points
+        .partition_point(|p| p.timestamp < time)
+        .saturating_sub(1)
+        .min(points.len() - 2);
+    let gap = points[i + 1].timestamp.met() - points[i].timestamp.met();
+    if gap > MAX_SAMPLE_GAP_SECONDS {
+        return None;
+    }
+    trajectory.interpolate(time).map(|s| s.state)
+}
+
+/// 把一批过境里**有姿态解**的行拼成一条轨迹（按时间排序）；NaN 行跳过。
 pub fn attitude_trajectory<S: Satellite>(
     files: &[PosAttFile],
 ) -> Trajectory<MissionElapsedTime<Grid<S>>, Attitude> {
@@ -67,6 +99,7 @@ pub fn attitude_trajectory<S: Satellite>(
                 .zip(f.q1.iter())
                 .zip(f.q2.iter())
                 .zip(f.q3.iter())
+                .filter(|(((_, q1), q2), q3)| q1.is_finite() && q2.is_finite() && q3.is_finite())
                 .map(|(((t, q1), q2), q3)| TemporalState {
                     timestamp: MissionElapsedTime::new(*t),
                     state: Attitude {
@@ -108,4 +141,63 @@ pub fn position_trajectory<S: Satellite>(
         .collect();
     points.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     Trajectory { points }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Sat02;
+
+    fn file(rows: &[(f64, f32, f32)]) -> PosAttFile {
+        // (t, q, lat)：q 同时填三个四元数分量，lat 也当 lon 用，高度固定
+        PosAttFile {
+            time: rows.iter().map(|r| r.0).collect(),
+            q1: rows.iter().map(|r| r.1).collect(),
+            q2: rows.iter().map(|r| r.1).collect(),
+            q3: rows.iter().map(|r| r.1).collect(),
+            latitude: rows.iter().map(|r| r.2).collect(),
+            longitude: rows.iter().map(|r| r.2).collect(),
+            altitude_m: rows.iter().map(|_| 5.0e5).collect(),
+        }
+    }
+
+    #[test]
+    fn nan_attitude_rows_are_left_out_and_not_bridged() {
+        // 0–9 s 有姿态，10–99 s 全 NaN，100–109 s 又有
+        let mut rows: Vec<(f64, f32, f32)> = (0..10).map(|i| (i as f64, 0.1, 1.0)).collect();
+        rows.extend((10..100).map(|i| (i as f64, f32::NAN, 1.0)));
+        rows.extend((100..110).map(|i| (i as f64, 0.2, 1.0)));
+        let traj = attitude_trajectory::<Sat02>(&[file(&rows)]);
+        assert_eq!(traj.points.len(), 20);
+        assert!(interpolate_sampled(&traj, MissionElapsedTime::new(5.5)).is_some());
+        // 缺失段里两侧有效采样相隔 91 s，不能连线
+        assert!(interpolate_sampled(&traj, MissionElapsedTime::new(50.0)).is_none());
+        assert!(interpolate_sampled(&traj, MissionElapsedTime::new(104.5)).is_some());
+    }
+
+    #[test]
+    fn a_dropped_second_is_still_interpolated() {
+        // 1 Hz 里掉了第 5 秒：相邻有效采样相隔 2 s，在容忍之内
+        let rows: Vec<(f64, f32, f32)> = (0..10)
+            .filter(|i| *i != 5)
+            .map(|i| (i as f64, 0.1, i as f32))
+            .collect();
+        let traj = position_trajectory::<Sat02>(&[file(&rows)]);
+        let p = interpolate_sampled(&traj, MissionElapsedTime::new(5.0)).unwrap();
+        assert!((p.latitude - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_pass_boundary_is_not_bridged() {
+        // 两次过境相隔一小时：过境之间的时刻不能拿两头连线
+        let a = file(&(0..5).map(|i| (i as f64, 0.1, 1.0)).collect::<Vec<_>>());
+        let b = file(
+            &(0..5)
+                .map(|i| (3600.0 + i as f64, 0.1, 1.0))
+                .collect::<Vec<_>>(),
+        );
+        let traj = position_trajectory::<Sat02>(&[a, b]);
+        assert!(interpolate_sampled(&traj, MissionElapsedTime::new(1800.0)).is_none());
+        assert!(interpolate_sampled(&traj, MissionElapsedTime::new(3602.5)).is_some());
+    }
 }

@@ -30,6 +30,8 @@ pub struct Chunk<S: Satellite> {
     pub(super) dropped_high_rate: AtomicUsize,
     /// 最显著一格里同一时间戳上的事例占比过高（带电粒子）而被否决的候选数，见 `search`
     pub(super) dropped_simultaneous: AtomicUsize,
+    /// 峰值时刻没有姿态解（位姿文件整段 NaN）而被丢弃的候选数，见 `search`
+    pub(super) dropped_no_attitude: AtomicUsize,
     /// 读不出来（如 0 字节）而跳过的位姿文件数
     pub(super) posatt_unreadable: usize,
     _satellite: PhantomData<S>,
@@ -114,6 +116,10 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
         let simultaneous = self.dropped_simultaneous.load(Ordering::Relaxed);
         if simultaneous > 0 {
             d.push(("dropped_simultaneous", simultaneous as f64));
+        }
+        let no_attitude = self.dropped_no_attitude.load(Ordering::Relaxed);
+        if no_attitude > 0 {
+            d.push(("dropped_no_attitude", no_attitude as f64));
         }
         d
     }

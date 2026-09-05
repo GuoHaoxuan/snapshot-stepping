@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use uom::si::f64::*;
 
 use super::Chunk;
-use crate::io::posatt::{attitude_trajectory, position_trajectory};
+use crate::io::posatt::{attitude_trajectory, interpolate_sampled, position_trajectory};
 use crate::types::Event;
 use crate::types::instrument::{Grid, Satellite};
 
@@ -161,6 +161,7 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
     let mut n_dead_gap = 0usize;
     let mut n_high_rate = 0usize;
     let mut n_simultaneous = 0usize;
+    let mut n_no_attitude = 0usize;
     let half_neighbor = 0.5_f64;
     let signals = results
         .into_iter()
@@ -210,10 +211,15 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // 2024-02 之后位姿文件里没有位置解（POS_TYPE=0，全 NaN），这样的
             // 候选定不了位。丢可以，静默丢不行——记账见 `diagnostics`。
-            let (Some(attitude), Some(position)) =
-                (attitudes.interpolate(peak), positions.interpolate(peak))
-            else {
+            let Some(position) = interpolate_sampled(&positions, peak) else {
                 n_dropped += 1;
+                return None;
+            };
+            // 姿态解也会整段缺失（v3 全量 82 个候选、3 个显著落在里面）。`Signal`
+            // 的姿态不是可选项，NaN 写成 null 又读不回来，只能丢弃并单独记账；
+            // 要保留这些候选得把姿态改成可选，见 `OPEN-QUESTIONS.md` 第 13 条。
+            let Some(attitude) = interpolate_sampled(&attitudes, peak) else {
+                n_no_attitude += 1;
                 return None;
             };
             Some(Signal {
@@ -227,8 +233,8 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
                 mean: candidate.mean,
                 sf: candidate.sf(),
                 false_positive_per_year: candidate.false_positive_per_year(),
-                attitude: attitude.state,
-                position: position.state,
+                attitude,
+                position,
                 // 天格没有反符合探测器
                 acd: None,
             })
@@ -246,6 +252,9 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
     chunk
         .dropped_simultaneous
         .store(n_simultaneous, Ordering::Relaxed);
+    chunk
+        .dropped_no_attitude
+        .store(n_no_attitude, Ordering::Relaxed);
     signals
 }
 

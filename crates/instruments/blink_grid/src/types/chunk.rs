@@ -26,6 +26,12 @@ pub struct Chunk<S: Satellite> {
     pub(super) events_outside_gti: AtomicUsize,
     /// 本底窗里有读出空洞而被否决的候选数，见 `search`
     pub(super) dropped_dead_gap: AtomicUsize,
+    /// 本底率超过读出可信上限而被否决的候选数，见 `search`
+    pub(super) dropped_high_rate: AtomicUsize,
+    /// 最显著一格里同一时间戳上的事例占比过高（带电粒子）而被否决的候选数，见 `search`
+    pub(super) dropped_simultaneous: AtomicUsize,
+    /// 读不出来（如 0 字节）而跳过的位姿文件数
+    pub(super) posatt_unreadable: usize,
     _satellite: PhantomData<S>,
 }
 
@@ -86,6 +92,9 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
                     .sum::<usize>() as f64,
             ),
         ];
+        if self.posatt_unreadable > 0 {
+            d.push(("posatt_unreadable", self.posatt_unreadable as f64));
+        }
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             d.push(("dropped_no_ephemeris", dropped as f64));
@@ -97,6 +106,14 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
         let dead = self.dropped_dead_gap.load(Ordering::Relaxed);
         if dead > 0 {
             d.push(("dropped_dead_gap", dead as f64));
+        }
+        let high = self.dropped_high_rate.load(Ordering::Relaxed);
+        if high > 0 {
+            d.push(("dropped_high_rate", high as f64));
+        }
+        let simultaneous = self.dropped_simultaneous.load(Ordering::Relaxed);
+        if simultaneous > 0 {
+            d.push(("dropped_simultaneous", simultaneous as f64));
         }
         d
     }

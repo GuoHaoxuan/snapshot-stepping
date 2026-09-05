@@ -59,11 +59,17 @@ pub(super) fn from_epoch<S: Satellite>(epoch: &DateTime<Utc>) -> Result<Chunk<S>
     }
     gti.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
 
-    // 位姿：整天的文件都读（一天 1–21 个小文件），省得逐过境配对
+    // 位姿：整天的文件都读（一天 1–21 个小文件），省得逐过境配对。读不出来的
+    // 跳过并计数：位姿是辅助数据，归档里有 0 字节的 posatt 文件（GRID-03B
+    // 2023-11-20 一个），不能让它把整天的事例都拖成 corrupt_data。
     let mut posatt = Vec::new();
+    let mut posatt_unreadable = 0usize;
     for dir in day_dirs::<S>(epoch, "fits8") {
         for path in fits_files(&dir) {
-            posatt.push(PosAttFile::from_fits_file(path.to_str().unwrap())?);
+            match PosAttFile::from_fits_file(path.to_str().unwrap()) {
+                Ok(file) => posatt.push(file),
+                Err(_) => posatt_unreadable += 1,
+            }
         }
     }
 
@@ -75,6 +81,9 @@ pub(super) fn from_epoch<S: Satellite>(epoch: &DateTime<Utc>) -> Result<Chunk<S>
         dropped_no_ephemeris: Default::default(),
         events_outside_gti: Default::default(),
         dropped_dead_gap: Default::default(),
+        dropped_high_rate: Default::default(),
+        dropped_simultaneous: Default::default(),
+        posatt_unreadable,
         _satellite: PhantomData,
     })
 }

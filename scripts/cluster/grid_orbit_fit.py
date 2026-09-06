@@ -87,8 +87,11 @@ def model_latlon(met, p, t0, period, sky=None):
     `sky` = (sun_ra, gmst) 是与相位无关的量，拟合时对同一批时刻预先算一次
     （astropy 每次算都会试着下载 IERS 表，农场节点没有外网，白等超时）。"""
     sun_ra, gmst = sky if sky is not None else (sun_ra_rad(met), gmst_rad(met))
-    # 升交点地方时不是严格常数（太阳同步只是近似），按定标窗测出的线性漂移外推
-    ltan = p["ltan_h"] + p.get("ltan_rate_h_per_day", 0.0) * (met - p.get("ltan_epoch_met", met)) / 86400.0
+    # 升交点地方时不是严格常数（太阳同步只是近似，且进动率随高度衰减而变）：按定标
+    # 测出的多项式（天为单位，相对 ltan_epoch_met）外推；旧参数只有线性项
+    days = (met - p.get("ltan_epoch_met", met)) / 86400.0
+    coef = p.get("ltan_coef")
+    ltan = np.polyval(coef, days) if coef else p["ltan_h"] + p.get("ltan_rate_h_per_day", 0.0) * days
     inc = np.radians(p["inc_deg"]); raan = sun_ra + np.radians(ltan * 15.0 - 180.0)
     u = 2 * np.pi * (met - t0) / period
     x = np.cos(u) * np.cos(raan) - np.sin(u) * np.sin(raan) * np.cos(inc)
@@ -177,12 +180,17 @@ def calib(sat, days, out, stk_files=()):
         slope, intercept = np.polyfit(x, ltans_arr, 1); res1 = ltans_arr - (intercept + slope * x)
         ltan_h, ltan_rate, ltan_epoch = float(intercept), float(slope), float(ltan_epochs.mean())
         print(f"  升交点地方时漂移 {ltan_rate*60:+.2f} min/day（跨 {(x.max()-x.min()):.0f} 天，线性残差 rms {np.sqrt(np.mean(res1**2))*60:.2f} min）")
+        ltan_coef = [ltan_rate, ltan_h]
         if len(ltans_arr) >= 6 and (x.max() - x.min()) > 120:
             c2 = np.polyfit(x, ltans_arr, 2); res2 = ltans_arr - np.polyval(c2, x)
-            print(f"  二次拟合残差 rms {np.sqrt(np.mean(res2**2))*60:.2f} min（二次项 {c2[0]*60:+.4f} min/day²）——只作参考，模型仍用线性")
+            print(f"  二次拟合残差 rms {np.sqrt(np.mean(res2**2))*60:.2f} min（二次项 {c2[0]*60:+.4f} min/day²）")
+            # 进动率随高度衰减而变，长基线上线性残差达几分钟、二次降到零点几分钟时改用二次
+            if np.sqrt(np.mean(res2**2)) < 0.5 * np.sqrt(np.mean(res1**2)):
+                ltan_coef = [float(c) for c in c2]; print("  采用二次模型")
     else:
         ltan_h, ltan_rate, ltan_epoch = float(np.median(ltans_arr)), 0.0, float(np.median(ltan_epochs)) if len(ltan_epochs) else 0.0
-    params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": ltan_h, "ltan_rate_h_per_day": ltan_rate, "ltan_epoch_met": ltan_epoch,
+        ltan_coef = [0.0, ltan_h]
+    params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": ltan_h, "ltan_rate_h_per_day": ltan_rate, "ltan_epoch_met": ltan_epoch, "ltan_coef": ltan_coef,
               # 周期取最晚三天的中位（阻力让它随时间变，早的窗不代表现在）
               "period_s": float(np.median([pp for _, pp in sorted(periods)[-3:]])), "alt_km": float(np.median(alts)),
               "template_maglat": centers.tolist(), "template_rate": med, "saa_rate_median": float(np.median(saa_r)) if saa_r else None, "days": days,

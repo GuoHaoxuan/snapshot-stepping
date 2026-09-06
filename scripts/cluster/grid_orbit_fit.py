@@ -398,7 +398,9 @@ def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2, half_w
         for i in range(len(T)):
             near = good & (np.abs(days_num - days_num[i]) <= half_window_days)
             n_pts = int(near.sum())
-            if n_pts < 3: resid[i] = 0.0 if good[i] else np.nan; t0_s[i] = T[i]; per_s[i] = P[i]; continue
+            if n_pts < 3:
+                # 前后 15 天里凑不齐 3 个接受日的孤立点，多半是失锁后的误捕获，不留
+                resid[i] = np.nan; t0_s[i] = T[i]; per_s[i] = P[i]; continue
             deg = degree if n_pts >= 6 else 1
             coef = np.polyfit(N[near] - N[i], T[near], deg); resid[i] = T[i] - np.polyval(coef, 0.0)
             t0_s[i] = float(np.polyval(coef, 0.0)); per_s[i] = float(np.polyval(np.polyder(coef), 0.0))

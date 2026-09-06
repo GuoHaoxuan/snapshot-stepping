@@ -26,7 +26,8 @@ pub struct Chunk {
     pub(super) dropped_single_detector: AtomicUsize,
     /// 因同一时间戳上挤了太多计数而被判为带电粒子、丢掉的候选数。
     pub(super) dropped_simultaneous: AtomicUsize,
-    /// 落在各探头 GTI 并集之外、搜索前丢掉的事例数，见 `search`
+    /// 本小时内、落在各探头 GTI 并集之外而搜索前丢掉的事例数，见 `search`
+    /// （整点前 120 s 的文件引导段不算在内）
     pub(super) events_outside_gti: AtomicUsize,
 }
 

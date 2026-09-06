@@ -81,8 +81,15 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 十几路事例流拼起来必然是乱的，而 search_new 假定输入按时间有序。
     events.sort();
 
-    // 活时间按各探头 GTI 的并集，事例也按它过滤：GTI 在 SAA 进入处截止，
+    // 逐小时文件带着整点前 120 s 的事例（TSTART = 整点 − 120 s，上一小时的文件到
+    // 整点为止、不重叠），先按本小时裁掉——那一截归上一小时的 chunk 管，不是丢数据，
+    // 不单独记账。再按各探头 GTI 的并集过滤并把它当活时间：GTI 在 SAA 进入处截止，
     // 之后到下一文件之前是死区，本底窗不能伸进去（见 `Chunk::gti_union`）。
+    let (start, stop) = (chunk.span[0].met(), chunk.span[1].met());
+    events.retain(|e| {
+        let t = e.time().met();
+        t >= start && t <= stop
+    });
     let gti_seconds = chunk.gti_union();
     let inside = |t: f64| gti_seconds.iter().any(|g| t >= g[0] && t <= g[1]);
     let before = events.len();

@@ -103,7 +103,8 @@ def main():
     ax.plot(x, rate_exp, "k_", ms=22, label="偶然期望")
     for i, (r, e, n) in enumerate(zip(rate_obs, rate_err,
                                       [int((g & cov).sum()) for g, _ in groups])):
-        ax.text(i, r + e + 2.0, "%.1f%%\n(n=%d)" % (r, n), ha="center", fontsize=8)
+        # 小样本的误差棒能顶到图外，标签压在轴内
+        ax.text(i, min(r + e + 2.0, 44.0), "%.1f%%\n(n=%d)" % (r, n), ha="center", fontsize=8)
     ax.set_xticks(x)
     ax.set_xticklabels([n for _, n in groups], fontsize=9)
     ax.set_ylabel("关联率 (%)")

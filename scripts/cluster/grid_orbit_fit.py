@@ -87,12 +87,17 @@ def model_latlon(met, p, t0, period, sky=None):
     `sky` = (sun_ra, gmst) 是与相位无关的量，拟合时对同一批时刻预先算一次
     （astropy 每次算都会试着下载 IERS 表，农场节点没有外网，白等超时）。"""
     sun_ra, gmst = sky if sky is not None else (sun_ra_rad(met), gmst_rad(met))
-    # 升交点地方时不是严格常数（太阳同步只是近似，且进动率随高度衰减而变）：按定标
-    # 测出的多项式（天为单位，相对 ltan_epoch_met）外推；旧参数只有线性项
-    days = (met - p.get("ltan_epoch_met", met)) / 86400.0
-    coef = p.get("ltan_coef")
-    ltan = np.polyval(coef, days) if coef else p["ltan_h"] + p.get("ltan_rate_h_per_day", 0.0) * days
-    inc = np.radians(p["inc_deg"]); raan = sun_ra + np.radians(ltan * 15.0 - 180.0)
+    inc = np.radians(p["inc_deg"])
+    if p.get("raan_coef"):
+        # 惯性系升交点赤经：J2 进动近似匀速（约 1°/天），直接对它做多项式外推。
+        # 早先对"升交点地方时"拟合，把太阳时差（一年 ±16 min 的季节摆动）也拟了进去，长基线残差 7 min。
+        days = (met - p["raan_epoch_met"]) / 86400.0
+        raan = np.radians(np.polyval(p["raan_coef"], days))
+    else:
+        days = (met - p.get("ltan_epoch_met", met)) / 86400.0
+        coef = p.get("ltan_coef")
+        ltan = np.polyval(coef, days) if coef else p["ltan_h"] + p.get("ltan_rate_h_per_day", 0.0) * days
+        raan = sun_ra + np.radians(ltan * 15.0 - 180.0)
     u = 2 * np.pi * (met - t0) / period
     x = np.cos(u) * np.cos(raan) - np.sin(u) * np.sin(raan) * np.cos(inc)
     y = np.cos(u) * np.sin(raan) + np.sin(u) * np.cos(raan) * np.cos(inc)
@@ -122,16 +127,16 @@ def stk_plane(path):
     inc = np.degrees(np.arccos(hn[:, 2])); raan = np.degrees(np.arctan2(hn[:, 0], -hn[:, 1]))
     ltan = ((raan - np.degrees(sun_ra_rad(T[m])) + 180.0) / 15.0) % 24
     asc = np.where((LAT[:-1] < 0) & (LAT[1:] >= 0))[0]; dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
-    return float(np.median(T[m])), float(np.nanmedian(inc)), float(np.nanmedian(ltan)), float(np.median(dt)) if len(dt) else None, float(np.median(ALT))
+    return float(np.median(T[m])), float(np.nanmedian(inc)), float(np.nanmedian(ltan)), float(np.median(dt)) if len(dt) else None, float(np.median(ALT)), float(np.degrees(np.arctan2(np.nanmedian(np.sin(np.radians(raan))), np.nanmedian(np.cos(np.radians(raan))))))
 
 
 def calib(sat, days, out, stk_files=()):
-    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []; ltan_epochs = []
+    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []; ltan_epochs = []; raans = []
     for path in stk_files:
         r = stk_plane(path)
         if r is None: print("  stk skip", os.path.basename(path)); continue
-        epoch, inc, ltan, period, alt = r
-        incs.append(inc); ltans.append(ltan); ltan_epochs.append(epoch); alts.append(alt)
+        epoch, inc, ltan, period, alt, raan_med = r
+        incs.append(inc); ltans.append(ltan); ltan_epochs.append(epoch); alts.append(alt); raans.append(raan_med)
         if period: periods.append((epoch, period))
         print(f"  {os.path.basename(path)}: inc {inc:.2f}° ltan {ltan:.2f} h alt {alt:.1f} km period {period}")
     # 模板只用最近的三个有事例的日子：本底率随太阳活动逐年变，早的日子形状也会走样
@@ -153,6 +158,7 @@ def calib(sat, days, out, stk_files=()):
         if not (np.isfinite(np.nanmedian(inc)) and np.isfinite(np.nanmedian(ltan))):
             print(f"  {day}: 角动量算不出（速度差分含 NaN），跳过"); continue
         incs.append(np.nanmedian(inc)); ltans.append(np.nanmedian(ltan)); alts.append(np.nanmedian(ALT) / 1e3); ltan_epochs.append(float(np.median(T[m])))
+        raans.append(float(np.degrees(np.arctan2(np.nanmedian(np.sin(np.radians(raan))), np.nanmedian(np.cos(np.radians(raan)))))))
         asc = np.where((LAT[:-1] < 0) & (LAT[1:] >= 0) & (np.diff(T) < 20))[0]
         if len(asc) > 1:
             dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
@@ -190,7 +196,19 @@ def calib(sat, days, out, stk_files=()):
     else:
         ltan_h, ltan_rate, ltan_epoch = float(np.median(ltans_arr)), 0.0, float(np.median(ltan_epochs)) if len(ltan_epochs) else 0.0
         ltan_coef = [0.0, ltan_h]
+    # 升交点赤经对时间的多项式（展开相位后拟合）；J2 进动率作物理对照
+    raan_coef = None; raan_epoch = float(np.mean(ltan_epochs)) if len(ltan_epochs) else 0.0
+    if len(raans) >= 2:
+        order = np.argsort(ltan_epochs); xr = (np.array(ltan_epochs)[order] - raan_epoch) / 86400.0
+        rr = np.degrees(np.unwrap(np.radians(np.array(raans)[order])))
+        deg = 2 if (len(rr) >= 6 and xr.max() - xr.min() > 120) else 1
+        raan_coef = [float(c) for c in np.polyfit(xr, rr, deg)]; resid = rr - np.polyval(raan_coef, xr)
+        P0 = float(np.median([pp for _, pp in sorted(periods)[-3:]])) if periods else 5640.0
+        a_km = (398600.4418 * P0 ** 2 / (4 * np.pi ** 2)) ** (1 / 3); n_deg_day = 360.0 / P0 * 86400
+        j2_rate = -1.5 * n_deg_day * 1.08263e-3 * (6378.137 / a_km) ** 2 * np.cos(np.radians(np.median(incs)))
+        print(f"  升交点赤经漂移 {np.polyder(raan_coef)[-1] if deg == 1 else raan_coef[1]:+.4f} °/day（{deg} 次，跨 {xr.max()-xr.min():.0f} 天，残差 rms {np.sqrt(np.mean(resid**2)):.3f}°）；J2 理论 {j2_rate:+.4f} °/day")
     params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": ltan_h, "ltan_rate_h_per_day": ltan_rate, "ltan_epoch_met": ltan_epoch, "ltan_coef": ltan_coef,
+              "raan_coef": raan_coef, "raan_epoch_met": raan_epoch,
               # 周期取最晚三天的中位（阻力让它随时间变，早的窗不代表现在）
               "period_s": float(np.median([pp for _, pp in sorted(periods)[-3:]])), "alt_km": float(np.median(alts)),
               "template_maglat": centers.tolist(), "template_rate": med, "saa_rate_median": float(np.median(saa_r)) if saa_r else None, "days": days,

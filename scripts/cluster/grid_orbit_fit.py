@@ -103,9 +103,10 @@ def calib(sat, days, out):
     for day in days:
         pos = load_positions(sat, day)
         if pos is None: continue
-        T, LAT, LON, ALT, XYZ = pos; ok = np.isfinite(LAT) & np.isfinite(XYZ[:, 0])
+        T, LAT, LON, ALT, XYZ = pos; ok = np.isfinite(LAT) & np.isfinite(XYZ[:, 0]) & np.isfinite(XYZ[:, 1]) & np.isfinite(XYZ[:, 2])
         T, LAT, LON, ALT, XYZ = T[ok], LAT[ok], LON[ok], ALT[ok], XYZ[ok]
-        if len(T) < 100: continue
+        if len(T) < 100:
+            print(f"  {day}: 有效 J2000 行 {len(T)}，跳过"); continue
         # 角动量方向 → 倾角、升交点赤经；只用相邻 1 s 的样本
         d = np.diff(T); m = np.where((d > 0.5) & (d < 1.5))[0]
         r = XYZ[m]; v = (XYZ[m + 1] - XYZ[m]) / d[m][:, None]
@@ -113,7 +114,9 @@ def calib(sat, days, out):
         inc = np.degrees(np.arccos(hn[:, 2])); raan = np.degrees(np.arctan2(hn[:, 0], -hn[:, 1]))
         ra_sun = np.degrees(sun_ra_rad(T[m]))
         ltan = ((raan - ra_sun + 180.0) / 15.0) % 24
-        incs.append(np.median(inc)); ltans.append(np.median(ltan)); alts.append(np.median(ALT) / 1e3); ltan_epochs.append(float(np.median(T[m])))
+        if not (np.isfinite(np.nanmedian(inc)) and np.isfinite(np.nanmedian(ltan))):
+            print(f"  {day}: 角动量算不出（速度差分含 NaN），跳过"); continue
+        incs.append(np.nanmedian(inc)); ltans.append(np.nanmedian(ltan)); alts.append(np.nanmedian(ALT) / 1e3); ltan_epochs.append(float(np.median(T[m])))
         asc = np.where((LAT[:-1] < 0) & (LAT[1:] >= 0) & (np.diff(T) < 20))[0]
         if len(asc) > 1:
             dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
@@ -127,6 +130,8 @@ def calib(sat, days, out):
             ml = dipole_lat(lat, lon); s = in_saa(lat, lon)
             tmpl_x.extend(ml[~s]); tmpl_y.extend(r_[~s]); saa_r.extend(r_[s])
         print(f"  {day}: inc {np.median(inc):.2f}° ltan {np.median(ltan):.2f} h alt {np.median(ALT)/1e3:.1f} km 升交点数 {len(asc)}")
+    if not incs:
+        sys.exit(f"{sat}: 定标日里没有一天算得出轨道面，换几天")
     tmpl_x = np.array(tmpl_x); tmpl_y = np.array(tmpl_y)
     edges = np.arange(-90, 91, 3.0); centers = edges[:-1] + 1.5; med = []
     for lo, hi in zip(edges[:-1], edges[1:]):
@@ -198,6 +203,8 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
             l = loss(t0, period)
             if l < best[2]: best = (t0, period, l)
     t0, period, l = best
+    if t0 is None:
+        print(f"  {day}: 损失全为无穷（模板/参数有 NaN？），放弃", file=sys.stderr); return None
     for dt0, dp in ((5.0, 1.0), (1.0, 0.25)):
         for pp in np.arange(period - 5 * dp, period + 5 * dp + 1e-9, dp):
             for tt in np.arange(t0 - 5 * dt0, t0 + 5 * dt0 + 1e-9, dt0):
@@ -325,9 +332,17 @@ def validate_range(sat, start, end, params, outdir):
             if ok.sum() > 10 and len(tab) > 2:
                 lon = np.interp(T[ok], tab[:, 0], np.unwrap(np.radians(tab[:, 1]))); lon = np.degrees(lon); lat = np.interp(T[ok], tab[:, 0], tab[:, 2])
                 inside = (T[ok] >= tab[0, 0]) & (T[ok] <= tab[-1, 0])
-                dist = 2 * (R_E + p["alt_km"]) * np.arcsin(np.sqrt(np.sin(np.radians(lat - LAT[ok]) / 2) ** 2 + np.cos(np.radians(LAT[ok])) * np.cos(np.radians(lat)) * np.sin(np.radians(((lon - LON[ok] + 180) % 360) - 180) / 2) ** 2))
-                dist = dist[inside]
-                if len(dist): print(f"  {d}: 误差中位 {np.median(dist):.0f} km p90 {np.percentile(dist, 90):.0f} max {dist.max():.0f}")
+                def gc(lat1, lon1, lat2, lon2):
+                    return 2 * (R_E + p["alt_km"]) * np.arcsin(np.sqrt(np.sin(np.radians(lat1 - lat2) / 2) ** 2 + np.cos(np.radians(lat2)) * np.cos(np.radians(lat1)) * np.sin(np.radians(((lon1 - lon2 + 180) % 360) - 180) / 2) ** 2))
+                dist = gc(lat, lon, LAT[ok], LON[ok])[inside]
+                if len(dist):
+                    # 沿轨/横轨分解：把表的时间平移 δ 再比，取误差最小的 δ 就是沿轨（相位）误差，剩下的是横轨（轨道面）误差
+                    best = (np.median(dist), 0.0)
+                    for delta in np.arange(-60, 60.1, 2.0):
+                        lo2 = np.degrees(np.interp(T[ok] + delta, tab[:, 0], np.unwrap(np.radians(tab[:, 1])))); la2 = np.interp(T[ok] + delta, tab[:, 0], tab[:, 2])
+                        m2 = np.median(gc(la2, lo2, LAT[ok], LON[ok])[inside])
+                        if m2 < best[0]: best = (m2, delta)
+                    print(f"  {d}: 误差中位 {np.median(dist):.0f} km p90 {np.percentile(dist, 90):.0f} max {dist.max():.0f}；沿轨相位差 {best[1]:+.0f} s（{best[1]*7.6:+.0f} km），去掉后横轨中位 {best[0]:.0f} km")
         elif pos is not None: print(f"  {d}: 无轨道表（被剔除或没数据）")
         d += timedelta(days=1)
 

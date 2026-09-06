@@ -2,7 +2,7 @@
 # HXMT 单探头占比审计：构建 → 核对 → 在 v6 显著候选上跑 acd-audit
 export PATH=/afs/ihep.ac.cn/soft/common/sysgroup/hep_job/bin:$PATH
 cd /scratchfs2/gecam/guohx/gridrun
-log=farm_logs/chain_audit.log
+log=/scratchfs2/gecam/guohx/gridrun/farm_logs/chain_audit.log   # 绝对路径：脚本后面 cd 过，相对路径会写空
 say() { echo "$(date +%H:%M) $*" >> $log; }
 say "chain start on $(hostname)"
 rm -f farm_logs/build_audit.out

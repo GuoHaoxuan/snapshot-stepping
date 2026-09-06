@@ -209,7 +209,7 @@ def predict_rate(p, lat, lon):
     return r
 
 
-def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
+def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None, period_fixed=False, window=600.0):
     """全天所有过境共用 (t0, period)：先粗扫相位，再细化。返回 (t0, period, 损失)。
 
     周期随大气阻力慢慢变短，`period_prior`（前一天拟出的周期）给出搜索中心，±20 s 内找。
@@ -239,11 +239,13 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
     best = (None, None, np.inf)
     center = period_prior if period_prior else p["period_s"]
     if t0_prior is not None:
-        t0_grid = np.arange(t0_prior - 600.0, t0_prior + 600.0 + 1e-9, 10.0)
+        t0_grid = np.arange(t0_prior - window, t0_prior + window + 1e-9, 10.0)
     else:
         t0_grid = None
-    # 周期一天能变 1 s（2024 年太阳活动高、440 km 的星阻力大），搜索范围要够
-    for period in np.arange(center - 24.0, center + 24.0 + 1e-9, 3.0):
+    # 周期一天能变 1 s（2024 年太阳活动高、440 km 的星阻力大），搜索范围要够；
+    # 逐日跟踪时周期由平滑模型给定，不在这里放开（放开会和相位一起游走）
+    period_grid = [center] if period_fixed else np.arange(center - 24.0, center + 24.0 + 1e-9, 3.0)
+    for period in period_grid:
         grid = t0_grid if t0_grid is not None else np.arange(ref, ref + period, 20.0)
         for t0 in grid:
             l = loss(t0, period)
@@ -252,7 +254,8 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
     if t0 is None:
         print(f"  {day}: 损失全为无穷（模板/参数有 NaN？），放弃", file=sys.stderr); return None
     for dt0, dp in ((5.0, 1.0), (1.0, 0.25)):
-        for pp in np.arange(period - 5 * dp, period + 5 * dp + 1e-9, dp):
+        pgrid = [period] if period_fixed else np.arange(period - 5 * dp, period + 5 * dp + 1e-9, dp)
+        for pp in pgrid:
             for tt in np.arange(t0 - 5 * dt0, t0 + 5 * dt0 + 1e-9, dt0):
                 l = loss(tt, pp)
                 if l < best[2]: best = (tt, pp, l)
@@ -304,24 +307,45 @@ def fit(sat, day, params, out):
     write_orbit(sat, day, p, t0, period, out); print("wrote", out)
 
 
-def fit_range(sat, start, end, params, outdir):
-    """逐天拟合并写 <outdir>/<sat>/YYYYMMDD.csv；周期以前一天的拟合值为先验；日志一行一天（loss 高的天要人看）。"""
+def fit_range(sat, start, end, params, outdir, max_loss=0.9, max_resid=120.0, window=150.0):
+    """逐日跟踪相位并写 <outdir>/<sat>/YYYYMMDD.csv。
+
+    周期不逐日放开：用最近 20 个接受的天的升交点历元对圈数做局部多项式（少于 8 个点用直线），
+    预测今天的历元与周期，只在预测 ±window 内找相位、周期固定。loss 超门槛或偏离预测超过
+    max_resid 的天不接受、不写表（候选按无星历丢），模型继续外推到下一天。
+    以前把周期放开 ±24 s 逐日游走，历元差一天能跳 300–500 s，半年下来 1/3 的天不自洽。"""
     from datetime import date
     p = json.load(open(params)); os.makedirs(os.path.join(outdir, sat), exist_ok=True)
-    d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-"))); prior = None; t0_prior = p.get("t0_anchor")
+    d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-")))
     logpath = os.path.join(outdir, sat, "fit_log.csv"); log = open(logpath, "a")
-    if os.path.getsize(logpath) == 0: log.write("day,t0_offset,period,loss,passes,t0_abs\n")
+    if os.path.getsize(logpath) == 0: log.write("day,t0_offset,period,loss,passes,t0_abs,pred_resid,accepted\n")
+    hist_N = [0.0]; hist_T = [float(p["t0_anchor"])]; period0 = float(p["period_s"])
     d = d0
     while d <= d1:
         day = d.strftime("%Y/%m/%d"); out = os.path.join(outdir, sat, d.strftime("%Y%m%d") + ".csv")
-        if not os.path.exists(out):
-            best = fit_day(sat, day, p, verbose=False, period_prior=prior, t0_prior=t0_prior)
-            if best is not None:
-                t0, period, l = best; prior = period; t0_prior = t0
-                write_orbit(sat, day, p, t0, period, out)
-                ref = float(np.floor(t0 / period) * period)
-                log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))},{t0:.2f}\n"); log.flush()
-                print(f"{day}: period {period:.1f} loss {l:.3f}", flush=True)
+        if os.path.exists(out): d += timedelta(days=1); continue
+        # 局部模型 → 今天末尾附近的历元与周期
+        n_use = min(len(hist_N), 20); Nh = np.array(hist_N[-n_use:]); Th = np.array(hist_T[-n_use:])
+        day_end = (datetime.strptime(day, "%Y/%m/%d").replace(tzinfo=timezone.utc) + timedelta(days=1) - REF).total_seconds()
+        if n_use >= 3:
+            deg = 2 if n_use >= 8 else 1
+            coef = np.polyfit(Nh - Nh[-1], Th, deg); dcoef = np.polyder(coef)
+            period_model = float(np.polyval(dcoef, 0.0))
+            n_ahead = np.round((day_end - Th[-1]) / period_model); t0_pred = float(np.polyval(coef, n_ahead))
+        else:
+            period_model = period0; n_ahead = np.round((day_end - Th[-1]) / period_model); t0_pred = Th[-1] + n_ahead * period_model
+        best = fit_day(sat, day, p, verbose=False, period_prior=period_model, t0_prior=t0_pred, period_fixed=True, window=window)
+        if best is None: d += timedelta(days=1); continue
+        t0, period, l = best
+        # 拟合把历元挪到了当天末尾；与预测的圈数对齐后比较
+        k = np.round((t0 - t0_pred) / period); t0_al = t0 - k * period; resid = t0_al - t0_pred
+        accepted = (l <= max_loss) and (abs(resid) <= max_resid)
+        ref = float(np.floor(t0 / period) * period)
+        log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))},{t0_al:.2f},{resid:.1f},{int(accepted)}\n"); log.flush()
+        if accepted:
+            hist_N.append(hist_N[-1] + float(np.round((t0_al - hist_T[-1]) / period))); hist_T.append(t0_al)
+            write_orbit(sat, day, p, t0_al, period, out)
+        print(f"{day}: period {period:.1f} loss {l:.3f} resid {resid:+.0f}s {'ok' if accepted else 'REJECT'}", flush=True)
         d += timedelta(days=1)
 
 
@@ -329,7 +353,7 @@ def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2):
     """把逐日拟合的相位历元串成一条平滑的轨道：升交点时刻 T 对圈数 N 做多项式（周期 = dT/dN 单调缓变），
     剔除 loss 高或偏离曲线的天，再用平滑模型重写每天的轨道表；被剔除的天删掉表（候选按无星历丢，不造假位置）。"""
     p = json.load(open(params)); d = os.path.join(outdir, sat)
-    rows = [r for r in csv.DictReader(open(os.path.join(d, "fit_log.csv"))) if r["day"] != "day" and r.get("t0_abs")]
+    rows = [r for r in csv.DictReader(open(os.path.join(d, "fit_log.csv"))) if r["day"] != "day" and r.get("t0_abs") and r.get("accepted", "1") == "1"]
     rows.sort(key=lambda r: r["day"])
     T = np.array([float(r["t0_abs"]) for r in rows]); L = np.array([float(r["loss"]) for r in rows]); P = np.array([float(r["period"]) for r in rows])
     # 圈数：相邻历元之差除以当时的周期取整，累加

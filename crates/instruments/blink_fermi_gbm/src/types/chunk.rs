@@ -26,6 +26,43 @@ pub struct Chunk {
     pub(super) dropped_single_detector: AtomicUsize,
     /// 因同一时间戳上挤了太多计数而被判为带电粒子、丢掉的候选数。
     pub(super) dropped_simultaneous: AtomicUsize,
+    /// 落在各探头 GTI 并集之外、搜索前丢掉的事例数，见 `search`
+    pub(super) events_outside_gti: AtomicUsize,
+}
+
+/// 把一批区间合并成不相交的并集（相隔不到 1 s 的也接上），并截到 `[start, stop]`。
+pub(super) fn union_intervals(mut rows: Vec<[f64; 2]>, start: f64, stop: f64) -> Vec<[f64; 2]> {
+    rows.retain(|r| r[1] > r[0]);
+    for r in rows.iter_mut() {
+        r[0] = r[0].max(start);
+        r[1] = r[1].min(stop);
+    }
+    rows.retain(|r| r[1] > r[0]);
+    rows.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap());
+    let mut out: Vec<[f64; 2]> = Vec::new();
+    for r in rows {
+        match out.last_mut() {
+            Some(last) if r[0] <= last[1] + 1.0 => last[1] = last[1].max(r[1]),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+impl Chunk {
+    /// 这一小时的活时间：各探头 TTE 的 GTI 并集。
+    ///
+    /// 逐小时 TTE 在 SAA 期间降压停数，文件的 GTI 在进入 SAA 处截止；搜索若把
+    /// 整小时当活时间，紧挨 SAA 的本底窗会伸进死区、把均值压低（SVOM 上同样
+    /// 的机制造出过两类假信号）。合并流里只要有一路在记数就算活着，故取并集。
+    pub fn gti_union(&self) -> Vec<[f64; 2]> {
+        let rows = self
+            .tte_files
+            .iter()
+            .flat_map(|file| file.gti_rows().map(|(a, b)| [a, b]))
+            .collect();
+        union_intervals(rows, self.span[0].met(), self.span[1].met())
+    }
 }
 
 impl blink_core::traits::Chunk for Chunk {
@@ -104,6 +141,10 @@ impl blink_core::traits::Chunk for Chunk {
         if simultaneous > 0 {
             diagnostics.push(("dropped_simultaneous", simultaneous as f64));
         }
+        let outside = self.events_outside_gti.load(Ordering::Relaxed);
+        if outside > 0 {
+            diagnostics.push(("events_outside_gti", outside as f64));
+        }
         diagnostics
     }
 
@@ -127,5 +168,25 @@ impl blink_core::traits::Chunk for Chunk {
             .into_iter()
             .max()
             .ok_or_else(|| Error::FileNotFound("no GBM files for this hour".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::union_intervals;
+
+    #[test]
+    fn overlapping_and_touching_rows_merge_and_clip_to_the_span() {
+        let rows = vec![[10.0, 100.0], [50.0, 120.0], [120.5, 200.0], [300.0, 400.0], [500.0, 450.0]];
+        assert_eq!(
+            union_intervals(rows, 20.0, 350.0),
+            vec![[20.0, 200.0], [300.0, 350.0]]
+        );
+    }
+
+    #[test]
+    fn rows_apart_by_more_than_a_second_stay_separate() {
+        let rows = vec![[0.0, 10.0], [11.5, 20.0]];
+        assert_eq!(union_intervals(rows, 0.0, 100.0), vec![[0.0, 10.0], [11.5, 20.0]]);
     }
 }

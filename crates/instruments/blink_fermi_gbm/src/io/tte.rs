@@ -55,6 +55,14 @@ impl TteFile {
         &self.pha
     }
 
+    /// GTI 各行 (START, STOP)。逐小时文件通常只有一行，在 SAA 进入处截止。
+    pub fn gti_rows(&self) -> impl Iterator<Item = (f64, f64)> + '_ {
+        self.gti_start
+            .iter()
+            .zip(self.gti_stop.iter())
+            .map(|(a, b)| (*a, *b))
+    }
+
     /// 本文件 GTI 与 `[from, to]` 的交集长度（秒）。
     pub fn gti_seconds_within(&self, from: f64, to: f64) -> f64 {
         self.gti_start

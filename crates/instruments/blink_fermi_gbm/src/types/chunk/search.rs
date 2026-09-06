@@ -81,13 +81,24 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     // 十几路事例流拼起来必然是乱的，而 search_new 假定输入按时间有序。
     events.sort();
 
+    // 活时间按各探头 GTI 的并集，事例也按它过滤：GTI 在 SAA 进入处截止，
+    // 之后到下一文件之前是死区，本底窗不能伸进去（见 `Chunk::gti_union`）。
+    let gti_seconds = chunk.gti_union();
+    let inside = |t: f64| gti_seconds.iter().any(|g| t >= g[0] && t <= g[1]);
+    let before = events.len();
+    events.retain(|e| inside(e.time().met()));
+    let n_outside = before - events.len();
+    let gti: Vec<[MissionElapsedTime<FermiGbm>; 2]> = gti_seconds
+        .iter()
+        .map(|g| [MissionElapsedTime::new(g[0]), MissionElapsedTime::new(g[1])])
+        .collect();
+
     let results = search_new(
         &events,
         chunk.groups.len(),
         chunk.span[0],
         chunk.span[1],
-        // 整小时当活时间：与按 chunk 边界夹取的原行为逐位相同。
-        &[[chunk.span[0], chunk.span[1]]],
+        &gti,
         SearchConfig {
             min_duration: Time::new::<uom::si::time::microsecond>(0.0),
             max_duration: Time::new::<uom::si::time::millisecond>(1.0),
@@ -171,6 +182,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_simultaneous
         .store(n_simultaneous, Ordering::Relaxed);
+    chunk
+        .events_outside_gti
+        .store(n_outside, Ordering::Relaxed);
 
     signals
 }

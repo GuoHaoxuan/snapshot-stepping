@@ -65,7 +65,7 @@ def main():
                lw=0.4, edgecolor="k", transform=ccrs.PlateCarree(), zorder=5,
                label="关联到闪电 (%d)" % (m & asc).sum())
     ax.set_title("(a) WWLLN 覆盖内的 %d 个 TGF 候选\n（库止于 2024-12-31，"
-                 "全部 824 个里只有这些查得了）" % m.sum(), fontsize=10)
+                 "全部 %d 个里只有这些查得了）" % (m.sum(), tgf.sum()), fontsize=10)
     ax.legend(fontsize=9, loc="upper center", bbox_to_anchor=(0.5, -0.05), ncol=2,
               frameon=False)
     ax.set_anchor("C")
@@ -95,9 +95,10 @@ def main():
     for g, _ in groups:
         n = int((g & cov).sum())
         k = int((g & cov & asc).sum())
-        rate_obs.append(100 * k / n)
-        rate_err.append(100 * np.sqrt(k) / n)
-        rate_exp.append(100 * np.nansum(prob[g & cov]) / n)
+        # 对照组在源头修掉以后可能一个都不剩，别除零
+        rate_obs.append(100 * k / n if n else 0.0)
+        rate_err.append(100 * np.sqrt(k) / n if n else 0.0)
+        rate_exp.append(100 * np.nansum(prob[g & cov]) / n if n else 0.0)
     ax.bar(x, rate_obs, 0.5, yerr=rate_err, color=["crimson", "0.6", "0.6"], capsize=4)
     ax.plot(x, rate_exp, "k_", ms=22, label="偶然期望")
     for i, (r, e, n) in enumerate(zip(rate_obs, rate_err,

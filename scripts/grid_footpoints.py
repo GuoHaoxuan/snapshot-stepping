@@ -19,35 +19,43 @@ C_KM_S = 299792.458
 
 
 def unit_b(lon, lat, h, date):
+    """一批点上的单位磁场向量 (E, N, U)。IGRF 逐点算勒让德函数很慢，所以整批一起算。"""
     Be, Bn, Bu = ppigrf.igrf(lon, lat, h, date)
-    v = np.array([float(np.squeeze(Be)), float(np.squeeze(Bn)), float(np.squeeze(Bu))])
-    return v / np.linalg.norm(v)
+    v = np.stack([np.ravel(Be), np.ravel(Bn), np.ravel(Bu)], axis=1).astype(float)
+    return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
 def deriv(state, date, sign):
-    lon, lat, h = state
-    e, n, u = sign * unit_b(lon, lat, h, date)
+    lon, lat, h = state[:, 0], state[:, 1], state[:, 2]
+    b = sign * unit_b(lon, lat, h, date)
     r = R_E + h
-    return np.array([np.degrees(e / (r * np.cos(np.radians(lat)))), np.degrees(n / r), u])
+    return np.stack([np.degrees(b[:, 0] / (r * np.cos(np.radians(lat)))), np.degrees(b[:, 1] / r), b[:, 2]], axis=1)
 
 
 def trace(lon, lat, h, date, sign):
-    """沿 sign*B 走到 100 km；返回 (lon, lat, 路径长度 km, 是否到达)。"""
-    x = np.array([lon, lat, h], float); path = 0.0
+    """整批候选沿 sign*B 同步走到 100 km；返回 (lon, lat, 路径长度 km, 是否到达) 的数组。"""
+    x = np.stack([lon, lat, h], axis=1).astype(float); n = len(x)
+    path = np.zeros(n); done = np.zeros(n, bool); reached = np.zeros(n, bool)
     for _ in range(MAX_STEPS):
-        k1 = deriv(x, date, sign)
-        k2 = deriv(x + 0.5 * STEP_KM * k1, date, sign)
-        k3 = deriv(x + 0.5 * STEP_KM * k2, date, sign)
-        k4 = deriv(x + STEP_KM * k3, date, sign)
-        step = STEP_KM * (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
-        if x[2] + step[2] <= FOOT_KM:
-            frac = (x[2] - FOOT_KM) / max(-step[2], 1e-9)
-            x = x + frac * step; path += frac * STEP_KM
-            return ((x[0] + 180) % 360) - 180, x[1], path, True
-        x = x + step; path += STEP_KM
-        if abs(x[1]) > 89.5 or x[2] > 60000:
+        act = ~done
+        if not act.any():
             break
-    return ((x[0] + 180) % 360) - 180, x[1], path, False
+        xa = x[act]
+        k1 = deriv(xa, date, sign)
+        k2 = deriv(xa + 0.5 * STEP_KM * k1, date, sign)
+        k3 = deriv(xa + 0.5 * STEP_KM * k2, date, sign)
+        k4 = deriv(xa + STEP_KM * k3, date, sign)
+        step = STEP_KM * (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
+        idx = np.where(act)[0]
+        for j, i in enumerate(idx):
+            if xa[j, 2] + step[j, 2] <= FOOT_KM:
+                frac = (xa[j, 2] - FOOT_KM) / max(-step[j, 2], 1e-9)
+                x[i] = xa[j] + frac * step[j]; path[i] += frac * STEP_KM; done[i] = True; reached[i] = True
+            else:
+                x[i] = xa[j] + step[j]; path[i] += STEP_KM
+                if abs(x[i, 1]) > 89.5 or x[i, 2] > 60000:
+                    done[i] = True
+    return ((x[:, 0] + 180) % 360) - 180, x[:, 1], path, reached
 
 
 def main():
@@ -58,25 +66,24 @@ def main():
     for path in args.tgfs:
         for rec in json.load(open(path)):
             s = rec["signal"]; alt[(s["instrument"], s["start"][:23])] = s["position"]["altitude"] / 1000.0
-    rows = list(csv.DictReader(open(args.csv)))
+    rows = [r for r in csv.DictReader(open(args.csv)) if (r["sat"], r["start"][:23]) in alt]
+    lon = np.array([float(r["lon"]) for r in rows]); lat = np.array([float(r["lat"]) for r in rows]); h = np.array([alt[(r["sat"], r["start"][:23])] for r in rows])
+    # IGRF 的历元按候选的中位年份取一次：一两年内场线足点的变化远小于 800 km 的关联半径
+    years = sorted(int(r["start"][:4]) for r in rows); date = datetime(years[len(years) // 2], 7, 1)
+    fn_lon, fn_lat, pn, okn = trace(lon, lat, h, date, +1.0)
+    fs_lon, fs_lat, ps, oks = trace(lon, lat, h, date, -1.0)
+    swap = fn_lat < fs_lat   # 保证 N 是北足点
+    for a, b in ((fn_lon, fs_lon), (fn_lat, fs_lat), (pn, ps), (okn, oks)):
+        a[swap], b[swap] = b[swap].copy(), a[swap].copy()
     w = csv.writer(open(args.output, "w", newline=""))
     w.writerow(["sat", "start", "fa", "dur_us", "lon", "lat", "alt_km", "cls", "footN_lon", "footN_lat", "pathN_km", "reachedN", "footS_lon", "footS_lat", "pathS_km", "reachedS", "travelN_ms", "travelS_ms"])
-    for r in rows:
-        key = (r["sat"], r["start"][:23])
-        if key not in alt:
-            print("no altitude for", key); continue
-        lon, lat, h = float(r["lon"]), float(r["lat"]), alt[key]
-        date = datetime.strptime(r["start"][:10], "%Y-%m-%d")
+    for i, r in enumerate(rows):
         cls = "short" if float(r["dur_us"]) < 500 else "long"
-        # 北半球里 B 向下：沿 +B 到北足点，沿 -B 到南足点（IGRF 的 Bu 在北半球为负）
-        fn_lon, fn_lat, pn, okn = trace(lon, lat, h, date, +1.0)
-        fs_lon, fs_lat, ps, oks = trace(lon, lat, h, date, -1.0)
-        if fn_lat < fs_lat:   # 保证 N 是北足点
-            fn_lon, fn_lat, pn, okn, fs_lon, fs_lat, ps, oks = fs_lon, fs_lat, ps, oks, fn_lon, fn_lat, pn, okn
-        w.writerow([r["sat"], r["start"][:23], r["fa"], r["dur_us"], f"{lon:.3f}", f"{lat:.3f}", f"{h:.1f}", cls,
-                    f"{fn_lon:.3f}", f"{fn_lat:.3f}", f"{pn:.0f}", int(okn), f"{fs_lon:.3f}", f"{fs_lat:.3f}", f"{ps:.0f}", int(oks),
-                    f"{pn / (0.95 * C_KM_S) * 1e3:.1f}", f"{ps / (0.95 * C_KM_S) * 1e3:.1f}"])
-        print("%s %s %-5s (%7.2f,%6.2f) -> N (%7.2f,%6.2f) %5.0f km %s | S (%7.2f,%6.2f) %5.0f km %s" % (r["sat"], r["start"][:19], cls, lon, lat, fn_lon, fn_lat, pn, "ok" if okn else "OPEN", fs_lon, fs_lat, ps, "ok" if oks else "OPEN"))
+        w.writerow([r["sat"], r["start"][:23], r["fa"], r["dur_us"], f"{lon[i]:.3f}", f"{lat[i]:.3f}", f"{h[i]:.1f}", cls,
+                    f"{fn_lon[i]:.3f}", f"{fn_lat[i]:.3f}", f"{pn[i]:.0f}", int(okn[i]), f"{fs_lon[i]:.3f}", f"{fs_lat[i]:.3f}", f"{ps[i]:.0f}", int(oks[i]),
+                    f"{pn[i] / (0.95 * C_KM_S) * 1e3:.1f}", f"{ps[i] / (0.95 * C_KM_S) * 1e3:.1f}"])
+        print("%s %s %-5s (%7.2f,%6.2f) -> N (%7.2f,%6.2f) %5.0f km %s | S (%7.2f,%6.2f) %5.0f km %s" % (
+            r["sat"], r["start"][:19], cls, lon[i], lat[i], fn_lon[i], fn_lat[i], pn[i], "ok" if okn[i] else "OPEN", fs_lon[i], fs_lat[i], ps[i], "ok" if oks[i] else "OPEN"))
 
 
 if __name__ == "__main__":

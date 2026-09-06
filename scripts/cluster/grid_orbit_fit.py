@@ -5,7 +5,7 @@
   validate <sat> <day> params.json                    # 盲拟合有真值的一天，报告位置误差
   fit      <sat> <day> params.json -o orbit.csv       # 无位置解的一天：输出 10 s 一行的 time,lon,lat,alt_m
 """
-import argparse, glob, json, os, sys
+import argparse, csv, glob, json, os, sys
 import numpy as np
 from astropy.io import fits
 from astropy.time import Time

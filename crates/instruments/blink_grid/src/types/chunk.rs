@@ -41,6 +41,8 @@ pub struct Chunk<S: Satellite> {
     pub(super) dropped_single_detector: AtomicUsize,
     /// 读不出来（如 0 字节）而跳过的位姿文件数
     pub(super) posatt_unreadable: usize,
+    /// 位置解在黑名单上被抹掉的位姿文件数（见 `io::orbit_fit::posatt_blacklisted`）
+    pub(super) posatt_positions_ignored: usize,
     _satellite: PhantomData<S>,
 }
 
@@ -103,6 +105,9 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
         ];
         if self.posatt_unreadable > 0 {
             d.push(("posatt_unreadable", self.posatt_unreadable as f64));
+        }
+        if self.posatt_positions_ignored > 0 {
+            d.push(("posatt_positions_ignored", self.posatt_positions_ignored as f64));
         }
         let fitted = self.positions_from_orbit_fit.load(Ordering::Relaxed);
         if fitted > 0 {

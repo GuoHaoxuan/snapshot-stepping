@@ -64,10 +64,23 @@ pub(super) fn from_epoch<S: Satellite>(epoch: &DateTime<Utc>) -> Result<Chunk<S>
     // 2023-11-20 一个），不能让它把整天的事例都拖成 corrupt_data。
     let mut posatt = Vec::new();
     let mut posatt_unreadable = 0usize;
-    for dir in day_dirs::<S>(epoch, "fits8") {
+    let mut posatt_positions_ignored = 0usize;
+    let mut days = vec![epoch.date_naive()];
+    if epoch.hour() == 0 {
+        days.push(epoch.date_naive() - TimeDelta::days(1));
+    }
+    for day in days {
+        let Some(dir) = latest_version_dir(S::DIR, "fits8", day) else { continue };
+        let blacklisted = crate::io::orbit_fit::posatt_blacklisted(S::DIR, day);
         for path in fits_files(&dir) {
             match PosAttFile::from_fits_file(path.to_str().unwrap()) {
-                Ok(file) => posatt.push(file),
+                Ok(mut file) => {
+                    if blacklisted {
+                        file.drop_positions();
+                        posatt_positions_ignored += 1;
+                    }
+                    posatt.push(file)
+                }
                 Err(_) => posatt_unreadable += 1,
             }
         }
@@ -100,6 +113,7 @@ pub(super) fn from_epoch<S: Satellite>(epoch: &DateTime<Utc>) -> Result<Chunk<S>
         without_attitude: Default::default(),
         dropped_single_detector: Default::default(),
         posatt_unreadable,
+        posatt_positions_ignored,
         _satellite: PhantomData,
     })
 }

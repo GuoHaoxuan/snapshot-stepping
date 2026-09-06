@@ -54,6 +54,13 @@ impl PosAttFile {
     pub fn positioned_rows(&self) -> usize {
         self.latitude.iter().filter(|v| v.is_finite()).count()
     }
+
+    /// 把位置解抹掉（姿态保留）：已知位置错误的日子用，之后由拟合轨道表接手。
+    pub fn drop_positions(&mut self) {
+        for v in self.latitude.iter_mut().chain(self.longitude.iter_mut()).chain(self.altitude_m.iter_mut()) {
+            *v = f32::NAN;
+        }
+    }
 }
 
 /// 允许插值跨越的最大采样间隔（s）。

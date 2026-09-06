@@ -71,6 +71,17 @@ pub fn orbit_fit_dir() -> Option<PathBuf> {
     std::env::var("GRID_ORBIT_FIT_DIR").ok().map(PathBuf::from)
 }
 
+/// 已知位置解错误的日子：`<GRID_ORBIT_FIT_DIR>/posatt_blacklist.txt`，每行 `<星目录名> <YYYY-MM-DD>`。
+///
+/// GRID-07 2024-02-08/09（丢位置解前的最后两天）的位姿把 8 kc/s 的辐射带计数率峰放在了
+/// 磁纬 35°，位置错了约 380 s；这样的日子位置抹掉、改用拟合轨道表。
+pub fn posatt_blacklisted(sat_dir: &str, day: NaiveDate) -> bool {
+    let Some(dir) = orbit_fit_dir() else { return false };
+    let Ok(text) = std::fs::read_to_string(dir.join("posatt_blacklist.txt")) else { return false };
+    let key = format!("{sat_dir} {}", day.format("%Y-%m-%d"));
+    text.lines().any(|l| l.trim() == key)
+}
+
 /// 某颗星某一天的拟合轨道表；目录没设或文件不存在返回 None。
 pub fn load_day(sat_dir: &str, day: NaiveDate) -> Option<Result<OrbitFitFile, String>> {
     let path = orbit_fit_dir()?

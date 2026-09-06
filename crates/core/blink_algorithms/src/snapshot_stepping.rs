@@ -82,6 +82,34 @@ pub fn poisson_isf(p: f64, lambda: f64) -> u32 {
     k
 }
 
+/// 窗口 `[window_start, window_stop]` 落在活时间里的长度：与各段的交集之和。
+///
+/// 各段先截到 chunk 边界 `[start, stop]` 内。只与一段相交时就是原先的夹取
+/// （同样的 max/min/减法，逐位相同）；窗口跨过一个比自己短的缺口时，缺口两侧
+/// 都算进活时间，与窗内计数（本来就只有活时间里有事例）口径一致。
+/// 从 `from` 段起扫，段起点超过窗右端就停。
+fn live_length<T: Copy + Ord + std::ops::Sub<Output = Time>>(
+    segments: &[[T; 2]],
+    from: usize,
+    window_start: T,
+    window_stop: T,
+    start: T,
+    stop: T,
+) -> Time {
+    let mut total = Time::new::<uom::si::time::second>(0.0);
+    for seg in &segments[from.min(segments.len())..] {
+        if seg[0] > window_stop {
+            break;
+        }
+        let live_start = window_start.max(seg[0].max(start));
+        let live_stop = window_stop.min(seg[1].min(stop));
+        if live_stop > live_start {
+            total += live_stop - live_start;
+        }
+    }
+    total
+}
+
 /// `gti`：活时间段，按时间排好、互不重叠。本底窗（候选两侧各 `neighbor/2`）
 /// 与空窗（各 `hollow/2`）都夹到候选所在的那一段里再算时长，所以本底率的分母
 /// 只数活时间。传 `[[start, stop]]` 一段即等价于原先按 chunk 边界夹取的行为，
@@ -149,23 +177,34 @@ pub fn search_new<E: Event>(
     // 符合判据要挑第 N 小的组 p 值，这块缓冲同样只分配一次。
     let mut group_fps: Vec<f64> = vec![0.0; group_number];
 
-    // cursor 所在的活时间段。段按时间排好、cursor 单调前进，下标只增不减；
-    // 每个 cursor 位置只算一次，内层循环里的四次夹取仍是原来那四次比较。
-    // 候选窗最长 max_duration，远短于任何缺口，不会跨段。cursor 落在段外
-    // （事例没按 GTI 过滤时会发生）就退回 chunk 边界，即原先的行为。
+    // 活时间：本底窗与 GTI 各段的交集之和，而不是夹到 cursor 所在的一段。
+    // 段按时间排好、cursor 单调前进，两个下标只增不减：`segment` 是 cursor 所在
+    // 的段，`window_segment` 是本底窗左端（cursor − neighbor/2）所及的第一段；
+    // 内层循环从后者起只扫到窗右端为止，一个窗口通常只碰到一两段。
+    // cursor 落在段外（事例没按 GTI 过滤时会发生）就退回 chunk 边界，即原先的行为。
+    // 段与窗只有一处相交时，结果与原先的夹取逐位相同（同样的 max/min/减法）。
+    let whole_chunk = [[start, stop]];
     let mut segment = 0usize;
+    let mut window_segment = 0usize;
 
     loop {
         let cursor_time = data[cursor].time();
         while segment + 1 < gti.len() && gti[segment + 1][0] <= cursor_time {
             segment += 1;
         }
-        let (live_start, live_stop) = match gti.get(segment) {
-            Some(seg) if seg[0] <= cursor_time && cursor_time <= seg[1] => {
-                (seg[0].max(start), seg[1].min(stop))
-            }
-            _ => (start, stop),
-        };
+        let inside = gti
+            .get(segment)
+            .is_some_and(|seg| seg[0] <= cursor_time && cursor_time <= seg[1]);
+        let (segments, from_segment): (&[[MissionElapsedTime<E::Instrument>; 2]], usize) =
+            if inside {
+                let window_start = cursor_time - config.neighbor / 2.0;
+                while window_segment + 1 < gti.len() && gti[window_segment][1] < window_start {
+                    window_segment += 1;
+                }
+                (gti, window_segment)
+            } else {
+                (&whole_chunk, 0)
+            };
 
         let mut step = 0;
         numbers.fill(0);
@@ -183,16 +222,23 @@ pub fn search_new<E: Event>(
             debug_assert_eq!(total_number, numbers.iter().sum::<u32>());
             let duration = data[cursor + step].time() - data[cursor].time();
             if total_number >= config.min_number && duration >= config.min_duration {
-                let mean_start_time =
-                    (data[cursor].time() - config.neighbor / 2.0).max(live_start);
-                let mean_stop_time =
-                    (data[cursor + step].time() + config.neighbor / 2.0).min(live_stop);
-                let hollow_start_time =
-                    (data[cursor].time() - config.hollow / 2.0).max(live_start);
-                let hollow_stop_time =
-                    (data[cursor + step].time() + config.hollow / 2.0).min(live_stop);
-                let pure_mean_duration =
-                    (mean_stop_time - mean_start_time) - (hollow_stop_time - hollow_start_time);
+                let mean_live = live_length(
+                    segments,
+                    from_segment,
+                    data[cursor].time() - config.neighbor / 2.0,
+                    data[cursor + step].time() + config.neighbor / 2.0,
+                    start,
+                    stop,
+                );
+                let hollow_live = live_length(
+                    segments,
+                    from_segment,
+                    data[cursor].time() - config.hollow / 2.0,
+                    data[cursor + step].time() + config.hollow / 2.0,
+                    start,
+                    stop,
+                );
+                let pure_mean_duration = mean_live - hollow_live;
                 let pure_mean_percent =
                     (duration / pure_mean_duration).get::<uom::si::ratio::ratio>();
                 let threshold = config.false_positive_per_year
@@ -354,6 +400,54 @@ mod tests {
     use super::*;
 
     use crate::test_support::{TestEvent, TestInstrument};
+
+    fn t(seconds: f64) -> MissionElapsedTime<TestInstrument> {
+        MissionElapsedTime::new(seconds)
+    }
+
+    #[test]
+    fn live_length_is_the_old_clamp_when_one_segment_covers_the_window() {
+        let seg = [[t(0.0), t(3600.0)]];
+        let old = (t(11.3).min(t(3600.0)) - t(9.8).max(t(0.0))).get::<uom::si::time::second>();
+        let new = live_length(&seg, 0, t(9.8), t(11.3), t(0.0), t(3600.0)).get::<uom::si::time::second>();
+        assert_eq!(old.to_bits(), new.to_bits());
+    }
+
+    #[test]
+    fn live_length_skips_a_short_hole_but_keeps_both_sides() {
+        // 缺口 [10.0, 10.2] 比本底窗短：两侧都算活时间，缺口本身不算
+        let seg = [[t(0.0), t(10.0)], [t(10.2), t(20.0)]];
+        let live = live_length(&seg, 0, t(9.8), t(11.3), t(0.0), t(20.0)).get::<uom::si::time::second>();
+        assert!((live - 1.3).abs() < 1e-9);
+        // 从第二段起扫（窗左端已过第一段）只算第二段
+        let live = live_length(&seg, 1, t(10.5), t(11.0), t(0.0), t(20.0)).get::<uom::si::time::second>();
+        assert!((live - 0.5).abs() < 1e-9);
+        // 段起点超过窗右端就停：窗完全落在缺口里是 0
+        let live = live_length(&seg, 0, t(10.05), t(10.15), t(0.0), t(20.0)).get::<uom::si::time::second>();
+        assert_eq!(live, 0.0);
+    }
+
+    #[test]
+    fn a_plateau_across_a_short_hole_does_not_trigger() {
+        // 1000 c/s 均匀铺满 20 s，只在 [10.0, 10.2] 挖空并把它记成 GTI 缺口。
+        // 缺口右侧的普通计数以前会因本底窗夹到缺口右侧、事例却数了两侧而被抬高
+        // 或压低；现在计数与活时间同口径，不该冒出候选。
+        let mut seconds: Vec<f64> = (0..20000).map(|i| i as f64 * 1e-3).collect();
+        seconds.retain(|s| !(10.0..10.2).contains(s));
+        let data: Vec<TestEvent> = seconds.iter().map(|&s| TestEvent { seconds: s, group: 0 }).collect();
+        let gti = [[t(0.0), t(10.0)], [t(10.2), t(20.0)]];
+        let config = SearchConfig {
+            min_duration: Time::new::<uom::si::time::microsecond>(0.0),
+            max_duration: Time::new::<uom::si::time::millisecond>(1.0),
+            neighbor: Time::new::<uom::si::time::second>(1.0),
+            hollow: Time::new::<uom::si::time::millisecond>(10.0),
+            false_positive_per_year: 20.0,
+            min_number: 8,
+            coincidence: 1,
+        };
+        let found = search_new(&data, 1, t(0.0), t(20.0), &gti, config);
+        assert!(found.is_empty(), "{} spurious candidates", found.len());
+    }
 
     fn at(seconds: &[f64]) -> Vec<TestEvent> {
         seconds

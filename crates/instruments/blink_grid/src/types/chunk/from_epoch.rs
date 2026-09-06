@@ -73,12 +73,26 @@ pub(super) fn from_epoch<S: Satellite>(epoch: &DateTime<Utc>) -> Result<Chunk<S>
         }
     }
 
+    // 拟合轨道表：只在位姿没有位置解时用到（`search` 里逐候选决定）
+    let mut orbit_fit = Vec::new();
+    let mut days = vec![epoch.date_naive()];
+    if epoch.hour() == 0 {
+        days.push(epoch.date_naive() - TimeDelta::days(1));
+    }
+    for day in days {
+        if let Some(Ok(file)) = crate::io::orbit_fit::load_day(S::DIR, day) {
+            orbit_fit.push(file);
+        }
+    }
+
     Ok(Chunk {
         span,
         passes,
         posatt,
+        orbit_fit,
         gti,
         dropped_no_ephemeris: Default::default(),
+        positions_from_orbit_fit: Default::default(),
         events_outside_gti: Default::default(),
         dropped_dead_gap: Default::default(),
         dropped_high_rate: Default::default(),

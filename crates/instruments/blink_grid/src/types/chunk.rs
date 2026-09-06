@@ -4,6 +4,7 @@ use chrono::prelude::*;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::io::orbit_fit::OrbitFitFile;
 use crate::io::{PassFile, PosAttFile};
 use crate::types::Event;
 use crate::types::instrument::{Grid, Satellite};
@@ -20,9 +21,13 @@ pub struct Chunk<S: Satellite> {
     pub passes: Vec<PassFile>,
     /// 同一天（及跨午夜时前一天）的全部位姿文件
     pub posatt: Vec<PosAttFile>,
+    /// 位姿文件没有位置解时的后备：拟合出来的轨道表（见 `io::orbit_fit`）
+    pub orbit_fit: Vec<OrbitFitFile>,
     /// 各过境的 GTI 截到本小时内，按时间排好
     pub gti: Vec<[f64; 2]>,
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 位姿文件没有位置解、位置来自拟合轨道表的候选数，见 `search`
+    pub(super) positions_from_orbit_fit: AtomicUsize,
     pub(super) events_outside_gti: AtomicUsize,
     /// 本底窗里有读出空洞而被否决的候选数，见 `search`
     pub(super) dropped_dead_gap: AtomicUsize,
@@ -98,6 +103,10 @@ impl<S: Satellite> blink_core::traits::Chunk for Chunk<S> {
         ];
         if self.posatt_unreadable > 0 {
             d.push(("posatt_unreadable", self.posatt_unreadable as f64));
+        }
+        let fitted = self.positions_from_orbit_fit.load(Ordering::Relaxed);
+        if fitted > 0 {
+            d.push(("positions_from_orbit_fit", fitted as f64));
         }
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {

@@ -157,8 +157,10 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
 
     let attitudes = attitude_trajectory::<S>(&chunk.posatt);
     let positions = position_trajectory::<S>(&chunk.posatt);
+    let fitted = crate::io::orbit_fit::trajectory::<S>(&chunk.orbit_fit);
 
     let mut n_dropped = 0usize;
+    let mut n_fitted = 0usize;
     let mut n_dead_gap = 0usize;
     let mut n_high_rate = 0usize;
     let mut n_simultaneous = 0usize;
@@ -223,9 +225,19 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // 2024-02 之后位姿文件里没有位置解（POS_TYPE=0，全 NaN），这样的
             // 候选定不了位。丢可以，静默丢不行——记账见 `diagnostics`。
-            let Some(position) = interpolate_sampled(&positions, peak) else {
-                n_dropped += 1;
-                return None;
+            // 位姿有位置解就用它；没有（2024-02-09 起）退回拟合轨道表；都没有才丢
+            let position = match interpolate_sampled(&positions, peak) {
+                Some(p) => p,
+                None => match interpolate_sampled(&fitted, peak) {
+                    Some(p) => {
+                        n_fitted += 1;
+                        p
+                    }
+                    None => {
+                        n_dropped += 1;
+                        return None;
+                    }
+                },
             };
             // 姿态解也会整段缺失（v3 全量 82 个候选、3 个显著落在里面）。候选的
             // 实质是时间加位置，姿态只是元数据：缺了照留，留空并记账。
@@ -255,6 +267,9 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .positions_from_orbit_fit
+        .store(n_fitted, Ordering::Relaxed);
     chunk.events_outside_gti.store(n_outside, Ordering::Relaxed);
     chunk.dropped_dead_gap.store(n_dead_gap, Ordering::Relaxed);
     chunk

@@ -140,6 +140,9 @@ SAA 另有特征），`scripts/cluster/grid_orbit_fit.py` 用有位置解的日�
   不可信**：那两天计数率 8 kc/s 的峰落在位姿给的磁纬 35–39° 处（正常日同处 500–700 c/s，
   8 kc/s 只出现在磁纬 ≥ 60° 的辐射带），位姿比真实位置错了约 380 s，正是丢位置解前的最后
   两天；拟合与计数率自洽，判定拟合对、位姿错。
+- 覆盖（2026-09-06 生产）：03B 158 个无位置日里 84 天有表、04 176 里 62、07 161 里 73。2–4 月
+  每月 20–30 天，5 月起稀疏（2024-05 磁暴让周期几天内掉好几秒，跟踪器失锁后重捕获不稳，
+  孤立的重捕获不留）。没有表的天候选照旧按无星历丢，账在 `dropped_no_ephemeris`。
 - 产物：每次过境 10 s 一行的 `orbit_fit/<星>/<YYYYMMDD>.csv`，Rust 侧位姿无位置解时退回它
   （`io::orbit_fit`，`GRID_ORBIT_FIT_DIR`），计入 `positions_from_orbit_fit`；`smooth_log.csv`
   记每天的 loss、残差、是否保留。工具：`scripts/cluster/grid_orbit_fit.py`（calib / validate /

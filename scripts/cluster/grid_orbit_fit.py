@@ -170,7 +170,8 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
         t0_grid = np.arange(t0_prior - 600.0, t0_prior + 600.0 + 1e-9, 10.0)
     else:
         t0_grid = None
-    for period in np.arange(center - 20.0, center + 20.0 + 1e-9, 4.0):
+    # 周期一天能变 1 s（2024 年太阳活动高、440 km 的星阻力大），搜索范围要够
+    for period in np.arange(center - 24.0, center + 24.0 + 1e-9, 3.0):
         grid = t0_grid if t0_grid is not None else np.arange(ref, ref + period, 20.0)
         for t0 in grid:
             l = loss(t0, period)
@@ -182,15 +183,27 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
                 l = loss(tt, pp)
                 if l < best[2]: best = (tt, pp, l)
         t0, period, l = best
+    # 把相位历元挪到这一天的末尾：u = 2π(t − t0)/P 里 t0 离数据越远，周期误差的
+    # 杠杆越长（6 天 92 圈，周期差 8 s 就是 740 s 的相位差，超出 ±600 s 的搜索）
+    t0 = t0 + period * np.floor((T.max() - t0) / period)
     if verbose: print(f"  {day}: t0 = ref + {t0 - ref:.1f} s, period {period:.1f} s, loss {l:.3f}, passes {len(passes)}, bins {len(T)}")
-    return best
+    return (t0, period, l)
 
 
 def validate(sat, day, params):
+    """像生产那样从定标锚的次日起逐天跟踪相位到 `day`，再拿 `day` 的真实位置量误差。"""
     p = json.load(open(params)); pos = load_positions(sat, day)
     if pos is None: print("no positions"); return
     T, LAT, LON, ALT, _ = pos; ok = np.isfinite(LAT)
-    best = fit_day(sat, day, p, t0_prior=p.get("t0_anchor"))
+    from datetime import date
+    t0_prior = p.get("t0_anchor"); period_prior = None
+    if t0_prior is not None:
+        d = (REF + timedelta(seconds=t0_prior)).date() + timedelta(days=1); target = date(*map(int, day.split("/")))
+        while d < target:
+            b = fit_day(sat, d.strftime("%Y/%m/%d"), p, verbose=False, period_prior=period_prior, t0_prior=t0_prior)
+            if b is not None: t0_prior, period_prior, _ = b; print(f"    跟踪 {d}: period {period_prior:.1f} loss {b[2]:.3f}")
+            d += timedelta(days=1)
+    best = fit_day(sat, day, p, period_prior=period_prior, t0_prior=t0_prior)
     if best is None: return
     t0, period, _ = best
     lat, lon = model_latlon(T[ok], p, t0, period)

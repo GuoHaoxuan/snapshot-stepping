@@ -93,7 +93,7 @@ def model_latlon(met, p, t0, period, sky=None):
 
 
 def calib(sat, days, out):
-    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []
+    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []
     for day in days:
         pos = load_positions(sat, day)
         if pos is None: continue
@@ -112,6 +112,9 @@ def calib(sat, days, out):
         if len(asc) > 1:
             dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
             if len(dt): periods.append(np.median(dt))
+        if len(asc):
+            # 绝对相位锚：最后一个升交点的时刻（线性插到 lat=0）
+            i = asc[-1]; frac = -LAT[i] / (LAT[i + 1] - LAT[i]); anchors.append(float(T[i] + frac * (T[i + 1] - T[i])))
         # 模板：本底率 vs 偶极磁纬（SAA 单独）
         for t, r_ in load_rates(sat, day):
             lat = np.interp(t, T, LAT); lon = np.interp(t, T, LON)
@@ -123,7 +126,10 @@ def calib(sat, days, out):
     for lo, hi in zip(edges[:-1], edges[1:]):
         mm = (tmpl_x >= lo) & (tmpl_x < hi); med.append(float(np.median(tmpl_y[mm])) if mm.sum() >= 5 else np.nan)
     params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": float(np.median(ltans)), "period_s": float(np.median(periods)), "alt_km": float(np.median(alts)),
-              "template_maglat": centers.tolist(), "template_rate": med, "saa_rate_median": float(np.median(saa_r)) if saa_r else None, "days": days}
+              "template_maglat": centers.tolist(), "template_rate": med, "saa_rate_median": float(np.median(saa_r)) if saa_r else None, "days": days,
+              # 相位锚：定标日里最晚的升交点；之后每天的 t0 以前一天为先验、只在 ±600 s 内找，
+              # 防止半圈翻转（南北对称的模板下另一解的 loss 只差一点，GRID-07 盲拟合就翻到了对面）
+              "t0_anchor": float(max(anchors)) if anchors else None}
     json.dump(params, open(out, "w"), indent=1)
     print("params:", {k: v for k, v in params.items() if not k.startswith("template")})
     print("template (maglat: rate):", " ".join(f"{c:.0f}:{v:.0f}" for c, v in zip(centers, med) if np.isfinite(v)))
@@ -136,10 +142,12 @@ def predict_rate(p, lat, lon):
     return r
 
 
-def fit_day(sat, day, p, verbose=True, period_prior=None):
+def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
     """全天所有过境共用 (t0, period)：先粗扫相位，再细化。返回 (t0, period, 损失)。
 
-    周期随大气阻力慢慢变短，`period_prior`（前一天拟出的周期）给出搜索中心，±20 s 内找。"""
+    周期随大气阻力慢慢变短，`period_prior`（前一天拟出的周期）给出搜索中心，±20 s 内找。
+    `t0_prior`（前一天的 t0，或定标的升交点锚）给出相位中心，只在 ±600 s 内找：
+    模板南北近似对称，另一解只差半圈、loss 只差一点，没有先验时可能翻到对面。"""
     passes = load_rates(sat, day)
     if not passes: return None
     T = np.concatenate([t for t, _ in passes]); R = np.concatenate([r for _, r in passes])
@@ -158,8 +166,13 @@ def fit_day(sat, day, p, verbose=True, period_prior=None):
         return float(np.sqrt(np.mean(np.concatenate(resid) ** 2)))
     best = (None, None, np.inf)
     center = period_prior if period_prior else p["period_s"]
+    if t0_prior is not None:
+        t0_grid = np.arange(t0_prior - 600.0, t0_prior + 600.0 + 1e-9, 10.0)
+    else:
+        t0_grid = None
     for period in np.arange(center - 20.0, center + 20.0 + 1e-9, 4.0):
-        for t0 in np.arange(ref, ref + period, 20.0):
+        grid = t0_grid if t0_grid is not None else np.arange(ref, ref + period, 20.0)
+        for t0 in grid:
             l = loss(t0, period)
             if l < best[2]: best = (t0, period, l)
     t0, period, l = best
@@ -177,7 +190,7 @@ def validate(sat, day, params):
     p = json.load(open(params)); pos = load_positions(sat, day)
     if pos is None: print("no positions"); return
     T, LAT, LON, ALT, _ = pos; ok = np.isfinite(LAT)
-    best = fit_day(sat, day, p)
+    best = fit_day(sat, day, p, t0_prior=p.get("t0_anchor"))
     if best is None: return
     t0, period, _ = best
     lat, lon = model_latlon(T[ok], p, t0, period)
@@ -208,15 +221,15 @@ def fit_range(sat, start, end, params, outdir):
     """逐天拟合并写 <outdir>/<sat>/YYYYMMDD.csv；周期以前一天的拟合值为先验；日志一行一天（loss 高的天要人看）。"""
     from datetime import date
     p = json.load(open(params)); os.makedirs(os.path.join(outdir, sat), exist_ok=True)
-    d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-"))); prior = None
+    d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-"))); prior = None; t0_prior = p.get("t0_anchor")
     log = open(os.path.join(outdir, sat, "fit_log.csv"), "a"); log.write("day,t0_offset,period,loss,passes\n") if os.path.getsize(os.path.join(outdir, sat, "fit_log.csv")) == 0 else None
     d = d0
     while d <= d1:
         day = d.strftime("%Y/%m/%d"); out = os.path.join(outdir, sat, d.strftime("%Y%m%d") + ".csv")
         if not os.path.exists(out):
-            best = fit_day(sat, day, p, verbose=False, period_prior=prior)
+            best = fit_day(sat, day, p, verbose=False, period_prior=prior, t0_prior=t0_prior)
             if best is not None:
-                t0, period, l = best; prior = period
+                t0, period, l = best; prior = period; t0_prior = t0
                 write_orbit(sat, day, p, t0, period, out)
                 ref = float(np.floor(t0 / period) * period)
                 log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))}\n"); log.flush()

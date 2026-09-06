@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from scipy import stats
 
 plt.rcParams.update({
     "font.sans-serif": ["PingFang SC", "Arial Unicode MS"],
@@ -31,6 +32,7 @@ def main():
     ap.add_argument("csv")
     ap.add_argument("assoc", nargs="?", help="blink wwlln 的关联结果 CSV")
     ap.add_argument("-o", "--output", required=True)
+    ap.add_argument("--days", type=int, default=792, help="全量搜索覆盖的天数（只进标题）")
     args = ap.parse_args()
 
     rows = list(csv.DictReader(open(args.csv)))
@@ -126,8 +128,13 @@ def main():
                 label="经闪电证实 (%d)" % confirmed.sum())
     ax.set_xlabel("能道中位数比（窗内 / 本底）")
     ax.set_ylabel("候选数")
-    ax.set_title("(c) 窗内事例的能道中位数 ÷ 本底的\n"
-                 "已证实的与整类分不开（KS $p=0.15$）", fontsize=10)
+    if confirmed.any() and (tgf & ~confirmed).any():
+        ks_p = stats.ks_2samp(ratio[confirmed], ratio[tgf & ~confirmed]).pvalue
+        ax.set_title("(c) 窗内事例的能道中位数 ÷ 本底的\n"
+                     "已证实的与整类%s（KS $p=%.2g$）" % ("分不开" if ks_p > 0.05 else "有差别", ks_p),
+                     fontsize=10)
+    else:
+        ax.set_title("(c) 窗内事例的能道中位数 ÷ 本底的", fontsize=10)
     ax.legend(fontsize=8)
 
     ax = fig.add_subplot(gs[1, 2])
@@ -140,13 +147,18 @@ def main():
     ax.set_xscale("log")
     ax.set_xlabel("窗长 (ms)")
     ax.set_ylabel("候选数")
-    ax.set_title("(d) 窗长分布\n已证实的偏短（1.31 vs 1.49 ms, $p=0.002$）",
-                 fontsize=10)
+    if confirmed.any() and (tgf & ~confirmed).any():
+        mw_p = stats.mannwhitneyu(dur[confirmed], dur[tgf & ~confirmed]).pvalue
+        ax.set_title("(d) 窗长分布\n已证实的%s（中位 %.2f vs %.2f ms, $p=%.2g$）" % (
+            "偏短" if np.median(dur[confirmed]) < np.median(dur[tgf & ~confirmed]) else "偏长",
+            np.median(dur[confirmed]), np.median(dur[tgf & ~confirmed]), mw_p), fontsize=10)
+    else:
+        ax.set_title("(d) 窗长分布", fontsize=10)
     ax.legend(fontsize=8)
 
-    fig.suptitle("SVOM/GRM 792 天全量搜索：显著候选里的三个群体\n"
-             "（TGF 候选一类由排除法得到，另经 WWLLN 闪电关联证实，见关联图）",
-             fontsize=12)
+    fig.suptitle("SVOM/GRM %d 天全量搜索：显著候选的分群\n"
+                 "（1 Hz 与高本底两类的根因已在源头修掉，留作对照；TGF 候选另经 WWLLN 闪电关联证实，见关联图）"
+                 % args.days, fontsize=12)
     fig.savefig(args.output, dpi=140, bbox_inches="tight")
     print("wrote", args.output)
     for mask, name, _ in classes:

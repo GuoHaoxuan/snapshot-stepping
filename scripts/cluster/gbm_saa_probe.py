@@ -8,7 +8,7 @@ REF = datetime(2001, 1, 1, tzinfo=timezone.utc)
 def met(iso):
     b = iso.rstrip("Z"); h, f = b.split("."); return (datetime.strptime(h + "." + (f + "000000")[:6], "%Y-%m-%dT%H:%M:%S.%f").replace(tzinfo=timezone.utc) - REF).total_seconds() + 5.0  # 2019 年 GBM MET 比 UTC 多 5 个闰秒
 # poshist SAA 段
-ph = sorted(glob.glob("%s/glg_poshist_all_190101_v*.fit" % D))[-1]
+ph = sorted(glob.glob("%s/glg_poshist_all_190101_v*.fit*" % D))[-1]
 with fits.open(ph) as h:
     pt = np.asarray(h[1].data["SCLK_UTC"], float); fl = np.asarray(h[1].data["FLAGS"])
 saa = (fl >> 1) & 1 == 1
@@ -52,7 +52,7 @@ for hh in range(24):
 print("事例缺口（>5 s）共 %d 个（14 路合计）" % len(edge_rows))
 print("%3s %3s %12s %8s %6s %6s | %8s %8s %8s %8s" % ("h", "det", "gap_start", "len_s", "inGTI", "inSAA", "r-far", "r-edge", "r+edge", "r+far"))
 for r in edge_rows[:60]:
-    print("%3d %3s %12.1f %8.1f %6s %6s | %8.0f %8.0f %8.0f %8.0f" % r)
+    print("%3d %3s %12.1f %8.1f %6s %6s | %8.0f %8.0f %8.0f %8.0f" % (r[0], r[1], r[2], r[4], r[5], r[6], r[7], r[8], r[9], r[10]))
 # 候选离最近缺口边的距离
 if len(ct):
     edges = np.array(sorted(set([r[2] for r in edge_rows] + [r[3] for r in edge_rows])))

@@ -87,7 +87,9 @@ def model_latlon(met, p, t0, period, sky=None):
     `sky` = (sun_ra, gmst) 是与相位无关的量，拟合时对同一批时刻预先算一次
     （astropy 每次算都会试着下载 IERS 表，农场节点没有外网，白等超时）。"""
     sun_ra, gmst = sky if sky is not None else (sun_ra_rad(met), gmst_rad(met))
-    inc = np.radians(p["inc_deg"]); raan = sun_ra + np.radians(p["ltan_h"] * 15.0 - 180.0)
+    # 升交点地方时不是严格常数（太阳同步只是近似），按定标窗测出的线性漂移外推
+    ltan = p["ltan_h"] + p.get("ltan_rate_h_per_day", 0.0) * (met - p.get("ltan_epoch_met", met)) / 86400.0
+    inc = np.radians(p["inc_deg"]); raan = sun_ra + np.radians(ltan * 15.0 - 180.0)
     u = 2 * np.pi * (met - t0) / period
     x = np.cos(u) * np.cos(raan) - np.sin(u) * np.sin(raan) * np.cos(inc)
     y = np.cos(u) * np.sin(raan) + np.sin(u) * np.cos(raan) * np.cos(inc)
@@ -97,7 +99,7 @@ def model_latlon(met, p, t0, period, sky=None):
 
 
 def calib(sat, days, out):
-    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []
+    incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []; ltan_epochs = []
     for day in days:
         pos = load_positions(sat, day)
         if pos is None: continue
@@ -111,11 +113,11 @@ def calib(sat, days, out):
         inc = np.degrees(np.arccos(hn[:, 2])); raan = np.degrees(np.arctan2(hn[:, 0], -hn[:, 1]))
         ra_sun = np.degrees(sun_ra_rad(T[m]))
         ltan = ((raan - ra_sun + 180.0) / 15.0) % 24
-        incs.append(np.median(inc)); ltans.append(np.median(ltan)); alts.append(np.median(ALT) / 1e3)
+        incs.append(np.median(inc)); ltans.append(np.median(ltan)); alts.append(np.median(ALT) / 1e3); ltan_epochs.append(float(np.median(T[m])))
         asc = np.where((LAT[:-1] < 0) & (LAT[1:] >= 0) & (np.diff(T) < 20))[0]
         if len(asc) > 1:
             dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
-            if len(dt): periods.append(np.median(dt))
+            if len(dt): periods.append((float(np.median(T[asc])), float(np.median(dt))))
         if len(asc):
             # 绝对相位锚：最后一个升交点的时刻（线性插到 lat=0）
             i = asc[-1]; frac = -LAT[i] / (LAT[i + 1] - LAT[i]); anchors.append(float(T[i] + frac * (T[i + 1] - T[i])))
@@ -129,7 +131,17 @@ def calib(sat, days, out):
     edges = np.arange(-90, 91, 3.0); centers = edges[:-1] + 1.5; med = []
     for lo, hi in zip(edges[:-1], edges[1:]):
         mm = (tmpl_x >= lo) & (tmpl_x < hi); med.append(float(np.median(tmpl_y[mm])) if mm.sum() >= 5 else np.nan)
-    params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": float(np.median(ltans)), "period_s": float(np.median(periods)), "alt_km": float(np.median(alts)),
+    # 升交点地方时的线性漂移：定标日跨度够大（两段窗）才定斜率，否则当常数
+    ltan_epochs = np.array(ltan_epochs); ltans_arr = np.array(ltans)
+    if len(ltans_arr) >= 4 and (ltan_epochs.max() - ltan_epochs.min()) > 10 * 86400:
+        slope, intercept = np.polyfit((ltan_epochs - ltan_epochs.mean()) / 86400.0, ltans_arr, 1)
+        ltan_h, ltan_rate, ltan_epoch = float(intercept), float(slope), float(ltan_epochs.mean())
+        print(f"  升交点地方时漂移 {ltan_rate*60:+.2f} min/day（跨 {(ltan_epochs.max()-ltan_epochs.min())/86400:.0f} 天）")
+    else:
+        ltan_h, ltan_rate, ltan_epoch = float(np.median(ltans_arr)), 0.0, float(np.median(ltan_epochs)) if len(ltan_epochs) else 0.0
+    params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": ltan_h, "ltan_rate_h_per_day": ltan_rate, "ltan_epoch_met": ltan_epoch,
+              # 周期取最晚三天的中位（阻力让它随时间变，早的窗不代表现在）
+              "period_s": float(np.median([pp for _, pp in sorted(periods)[-3:]])), "alt_km": float(np.median(alts)),
               "template_maglat": centers.tolist(), "template_rate": med, "saa_rate_median": float(np.median(saa_r)) if saa_r else None, "days": days,
               # 相位锚：定标日里最晚的升交点；之后每天的 t0 以前一天为先验、只在 ±600 s 内找，
               # 防止半圈翻转（南北对称的模板下另一解的 loss 只差一点，GRID-07 盲拟合就翻到了对面）
@@ -260,7 +272,7 @@ def fit_range(sat, start, end, params, outdir):
         d += timedelta(days=1)
 
 
-def smooth(sat, params, outdir, max_loss=0.9, max_resid=150.0, degree=3):
+def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2):
     """把逐日拟合的相位历元串成一条平滑的轨道：升交点时刻 T 对圈数 N 做多项式（周期 = dT/dN 单调缓变），
     剔除 loss 高或偏离曲线的天，再用平滑模型重写每天的轨道表；被剔除的天删掉表（候选按无星历丢，不造假位置）。"""
     p = json.load(open(params)); d = os.path.join(outdir, sat)
@@ -270,7 +282,11 @@ def smooth(sat, params, outdir, max_loss=0.9, max_resid=150.0, degree=3):
     # 圈数：相邻历元之差除以当时的周期取整，累加
     N = np.zeros(len(T)); 
     for i in range(1, len(T)): N[i] = N[i - 1] + np.round((T[i] - T[i - 1]) / P[i - 1])
+    # loss 门槛自适应：中位 + 3 倍中位绝对偏差（不同星、不同季节的 loss 水平不同），上限 0.9
+    if max_loss is None:
+        max_loss = min(0.9, float(np.median(L) + 3 * np.median(np.abs(L - np.median(L)))))
     good = L <= max_loss
+    print(f"  loss 门槛 {max_loss:.3f}，超出的天 {int((~good).sum())}")
     for _ in range(6):
         if good.sum() < degree + 2: break
         coef = np.polyfit(N[good], T[good], degree); resid = T - np.polyval(coef, N)

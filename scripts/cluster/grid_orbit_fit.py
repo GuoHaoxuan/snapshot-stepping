@@ -139,8 +139,12 @@ def calib(sat, days, out, stk_files=()):
         incs.append(inc); ltans.append(ltan); ltan_epochs.append(epoch); alts.append(alt); raans.append(raan_med)
         if period: periods.append((epoch, period))
         print(f"  {os.path.basename(path)}: inc {inc:.2f}° ltan {ltan:.2f} h alt {alt:.1f} km period {period}")
-    # 模板只用最近的三个有事例的日子：本底率随太阳活动逐年变，早的日子形状也会走样
-    template_days = set(sorted(days)[-3:])
+    # 模板只用最近三个有位置解的日子：本底率随太阳活动逐年变，早的日子形状也会走样
+    valid = []
+    for day in days:
+        pos = load_positions(sat, day)
+        if pos is not None and (np.isfinite(pos[1]).sum() >= 100): valid.append(day)
+    template_days = set(sorted(valid)[-3:])
     for day in days:
         pos = load_positions(sat, day)
         if pos is None: continue
@@ -337,7 +341,7 @@ def fit_range(sat, start, end, params, outdir, max_loss=0.9, max_resid=120.0, wi
     d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-")))
     logpath = os.path.join(outdir, sat, "fit_log.csv"); log = open(logpath, "a")
     if os.path.getsize(logpath) == 0: log.write("day,t0_offset,period,loss,passes,t0_abs,pred_resid,accepted\n")
-    hist_N = [0.0]; hist_T = [float(p["t0_anchor"])]; period0 = float(p["period_s"])
+    hist_N = [0.0]; hist_T = [float(p["t0_anchor"])]; period0 = float(p["period_s"]); n_rej = 0
     d = d0
     while d <= d1:
         day = d.strftime("%Y/%m/%d"); out = os.path.join(outdir, sat, d.strftime("%Y%m%d") + ".csv")
@@ -352,12 +356,16 @@ def fit_range(sat, start, end, params, outdir, max_loss=0.9, max_resid=120.0, wi
             n_ahead = np.round((day_end - Th[-1]) / period_model); t0_pred = float(np.polyval(coef, n_ahead))
         else:
             period_model = period0; n_ahead = np.round((day_end - Th[-1]) / period_model); t0_pred = Th[-1] + n_ahead * period_model
-        best = fit_day(sat, day, p, verbose=False, period_prior=period_model, t0_prior=t0_pred, period_fixed=True, window=window)
+        # 连续几天没接受（磁暴让周期几天内掉好几秒，局部模型跟不上）就逐步放宽：
+        # 窗 150 → 300 → 600 s，第三次起周期也放开，重新捕获后再收紧
+        win = window if n_rej == 0 else (2 * window if n_rej < 3 else 4 * window)
+        best = fit_day(sat, day, p, verbose=False, period_prior=period_model, t0_prior=t0_pred, period_fixed=(n_rej < 3), window=win)
         if best is None: d += timedelta(days=1); continue
         t0, period, l = best
         # 拟合把历元挪到了当天末尾；与预测的圈数对齐后比较
         k = np.round((t0 - t0_pred) / period); t0_al = t0 - k * period; resid = t0_al - t0_pred
-        accepted = (l <= max_loss) and (abs(resid) <= max_resid)
+        accepted = (l <= max_loss) and (abs(resid) <= (max_resid if n_rej == 0 else win))
+        n_rej = 0 if accepted else n_rej + 1
         ref = float(np.floor(t0 / period) * period)
         log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))},{t0_al:.2f},{resid:.1f},{int(accepted)}\n"); log.flush()
         if accepted:
@@ -367,9 +375,10 @@ def fit_range(sat, start, end, params, outdir, max_loss=0.9, max_resid=120.0, wi
         d += timedelta(days=1)
 
 
-def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2):
-    """把逐日拟合的相位历元串成一条平滑的轨道：升交点时刻 T 对圈数 N 做多项式（周期 = dT/dN 单调缓变），
-    剔除 loss 高或偏离曲线的天，再用平滑模型重写每天的轨道表；被剔除的天删掉表（候选按无星历丢，不造假位置）。"""
+def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2, half_window_days=15):
+    """把逐日拟合的相位历元串成一条平滑的轨道：对每个接受日，用前后 15 天内的接受日做升交点时刻 T 对圈数 N 的
+    局部多项式（周期 = dT/dN），剔除 loss 高或偏离局部曲线的天，再用局部模型重写该天的轨道表；被剔除的天删掉表
+    （候选按无星历丢，不造假位置）。全程一条二次曲线不行：2024 年的磁暴让周期几天内掉好几秒。"""
     p = json.load(open(params)); d = os.path.join(outdir, sat)
     rows = [r for r in csv.DictReader(open(os.path.join(d, "fit_log.csv"))) if r["day"] != "day" and r.get("t0_abs") and r.get("accepted", "1") == "1"]
     rows.sort(key=lambda r: r["day"])
@@ -382,26 +391,31 @@ def smooth(sat, params, outdir, max_loss=None, max_resid=120.0, degree=2):
         max_loss = min(0.9, float(np.median(L) + 3 * np.median(np.abs(L - np.median(L)))))
     good = L <= max_loss
     print(f"  loss 门槛 {max_loss:.3f}，超出的天 {int((~good).sum())}")
-    for _ in range(6):
-        if good.sum() < degree + 2: break
-        coef = np.polyfit(N[good], T[good], degree); resid = T - np.polyval(coef, N)
-        new_good = good & (np.abs(resid) <= max_resid)
+    from datetime import date
+    days_num = np.array([date(*map(int, r["day"].split("-"))).toordinal() for r in rows], float)
+    resid = np.full(len(T), np.nan); t0_s = np.full(len(T), np.nan); per_s = np.full(len(T), np.nan)
+    for _ in range(3):
+        for i in range(len(T)):
+            near = good & (np.abs(days_num - days_num[i]) <= half_window_days)
+            n_pts = int(near.sum())
+            if n_pts < 3: resid[i] = 0.0 if good[i] else np.nan; t0_s[i] = T[i]; per_s[i] = P[i]; continue
+            deg = degree if n_pts >= 6 else 1
+            coef = np.polyfit(N[near] - N[i], T[near], deg); resid[i] = T[i] - np.polyval(coef, 0.0)
+            t0_s[i] = float(np.polyval(coef, 0.0)); per_s[i] = float(np.polyval(np.polyder(coef), 0.0))
+        new_good = good & (np.abs(np.nan_to_num(resid, nan=1e9)) <= max_resid)
         if new_good.sum() == good.sum(): break
         good = new_good
-    coef = np.polyfit(N[good], T[good], degree); resid = T - np.polyval(coef, N)
-    dcoef = np.polyder(coef)
-    print(f"{sat}: {len(rows)} 天，保留 {good.sum()}；残差 |中位| {np.median(np.abs(resid[good])):.1f} s，周期 {np.polyval(dcoef, N[0]):.1f} → {np.polyval(dcoef, N[-1]):.1f} s")
+    print(f"{sat}: {len(rows)} 天，保留 {good.sum()}；局部残差 |中位| {np.nanmedian(np.abs(resid[good])):.1f} s，周期 {per_s[good][0]:.1f} → {per_s[good][-1]:.1f} s")
     with open(os.path.join(d, "smooth_log.csv"), "w") as f:
         f.write("day,loss,period_fit,period_smooth,resid_s,kept\n")
-        for r, l, pp, n, rs, g in zip(rows, L, P, N, resid, good):
-            f.write(f"{r['day']},{l:.3f},{pp:.1f},{np.polyval(dcoef, n):.2f},{rs:.1f},{int(g)}\n")
-    for r, n, g in zip(rows, N, good):
+        for r, l, pp, ps_, rs, g in zip(rows, L, P, per_s, resid, good):
+            f.write(f"{r['day']},{l:.3f},{pp:.1f},{ps_:.2f},{rs:.1f},{int(g)}\n")
+    for r, t0, period, g in zip(rows, t0_s, per_s, good):
         y, m, dd = r["day"].split("-"); out = os.path.join(d, f"{y}{m}{dd}.csv")
         if not g:
             if os.path.exists(out): os.remove(out)
             continue
-        t0 = float(np.polyval(coef, n)); period = float(np.polyval(dcoef, n))
-        write_orbit(sat, f"{y}/{m}/{dd}", p, t0, period, out)
+        write_orbit(sat, f"{y}/{m}/{dd}", p, float(t0), float(period), out)
     print("  剔除的天:", [r["day"] for r, g in zip(rows, good) if not g][:20])
 
 

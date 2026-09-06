@@ -98,8 +98,41 @@ def model_latlon(met, p, t0, period, sky=None):
     return lat, ((lon + 180) % 360) - 180
 
 
-def calib(sat, days, out):
+def stk_plane(path):
+    """任务组的 STK 星历（source_orbit/orb_*.txt，10 s 一行）：第一组 xyz 是地固系、第二组是惯性系。
+    返回 (历元 MET, 倾角, 升交点地方时, 周期, 高度)；没有事例，只能定轨道面，不能定模板。"""
+    from datetime import datetime as DT
+    T = []; XYZ = []; LAT = []; ALT = []
+    for l in open(path, errors="ignore"):
+        parts = l.split()
+        if len(parts) < 15 or not parts[0].isdigit(): continue
+        try:
+            t = DT.strptime(" ".join(parts[:4]), "%d %b %Y %H:%M:%S.%f").replace(tzinfo=timezone.utc)
+        except ValueError: continue
+        T.append((t - REF).total_seconds()); LAT.append(float(parts[4])); ALT.append(float(parts[6]))
+        XYZ.append([float(parts[12]), float(parts[13]), float(parts[14])])
+    T = np.array(T); XYZ = np.array(XYZ); LAT = np.array(LAT); ALT = np.array(ALT)
+    if len(T) < 100: return None
+    d = np.diff(T); m = np.where((d > 5) & (d < 15))[0]
+    r = XYZ[m]; v = (XYZ[m + 1] - XYZ[m]) / d[m][:, None]
+    hvec = np.cross(r, v); hn = hvec / np.linalg.norm(hvec, axis=1, keepdims=True)
+    inc = np.degrees(np.arccos(hn[:, 2])); raan = np.degrees(np.arctan2(hn[:, 0], -hn[:, 1]))
+    ltan = ((raan - np.degrees(sun_ra_rad(T[m])) + 180.0) / 15.0) % 24
+    asc = np.where((LAT[:-1] < 0) & (LAT[1:] >= 0))[0]; dt = np.diff(T[asc]); dt = dt[(dt > 5000) & (dt < 6500)]
+    return float(np.median(T[m])), float(np.nanmedian(inc)), float(np.nanmedian(ltan)), float(np.median(dt)) if len(dt) else None, float(np.median(ALT))
+
+
+def calib(sat, days, out, stk_files=()):
     incs = []; ltans = []; periods = []; alts = []; tmpl_x = []; tmpl_y = []; saa_r = []; anchors = []; ltan_epochs = []
+    for path in stk_files:
+        r = stk_plane(path)
+        if r is None: print("  stk skip", os.path.basename(path)); continue
+        epoch, inc, ltan, period, alt = r
+        incs.append(inc); ltans.append(ltan); ltan_epochs.append(epoch); alts.append(alt)
+        if period: periods.append((epoch, period))
+        print(f"  {os.path.basename(path)}: inc {inc:.2f}° ltan {ltan:.2f} h alt {alt:.1f} km period {period}")
+    # 模板只用最近的三个有事例的日子：本底率随太阳活动逐年变，早的日子形状也会走样
+    template_days = set(sorted(days)[-3:])
     for day in days:
         pos = load_positions(sat, day)
         if pos is None: continue
@@ -125,6 +158,7 @@ def calib(sat, days, out):
             # 绝对相位锚：最后一个升交点的时刻（线性插到 lat=0）
             i = asc[-1]; frac = -LAT[i] / (LAT[i + 1] - LAT[i]); anchors.append(float(T[i] + frac * (T[i + 1] - T[i])))
         # 模板：本底率 vs 偶极磁纬（SAA 单独）
+        if day not in template_days: continue
         for t, r_ in load_rates(sat, day):
             lat = np.interp(t, T, LAT); lon = np.interp(t, T, LON)
             ml = dipole_lat(lat, lon); s = in_saa(lat, lon)
@@ -139,9 +173,13 @@ def calib(sat, days, out):
     # 升交点地方时的线性漂移：定标日跨度够大（两段窗）才定斜率，否则当常数
     ltan_epochs = np.array(ltan_epochs); ltans_arr = np.array(ltans)
     if len(ltans_arr) >= 4 and (ltan_epochs.max() - ltan_epochs.min()) > 10 * 86400:
-        slope, intercept = np.polyfit((ltan_epochs - ltan_epochs.mean()) / 86400.0, ltans_arr, 1)
+        x = (ltan_epochs - ltan_epochs.mean()) / 86400.0
+        slope, intercept = np.polyfit(x, ltans_arr, 1); res1 = ltans_arr - (intercept + slope * x)
         ltan_h, ltan_rate, ltan_epoch = float(intercept), float(slope), float(ltan_epochs.mean())
-        print(f"  升交点地方时漂移 {ltan_rate*60:+.2f} min/day（跨 {(ltan_epochs.max()-ltan_epochs.min())/86400:.0f} 天）")
+        print(f"  升交点地方时漂移 {ltan_rate*60:+.2f} min/day（跨 {(x.max()-x.min()):.0f} 天，线性残差 rms {np.sqrt(np.mean(res1**2))*60:.2f} min）")
+        if len(ltans_arr) >= 6 and (x.max() - x.min()) > 120:
+            c2 = np.polyfit(x, ltans_arr, 2); res2 = ltans_arr - np.polyval(c2, x)
+            print(f"  二次拟合残差 rms {np.sqrt(np.mean(res2**2))*60:.2f} min（二次项 {c2[0]*60:+.4f} min/day²）——只作参考，模型仍用线性")
     else:
         ltan_h, ltan_rate, ltan_epoch = float(np.median(ltans_arr)), 0.0, float(np.median(ltan_epochs)) if len(ltan_epochs) else 0.0
     params = {"sat": sat, "inc_deg": float(np.median(incs)), "ltan_h": ltan_h, "ltan_rate_h_per_day": ltan_rate, "ltan_epoch_met": ltan_epoch,
@@ -349,7 +387,7 @@ def validate_range(sat, start, end, params, outdir):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
-    a = sub.add_parser("calib"); a.add_argument("sat"); a.add_argument("days", nargs="+"); a.add_argument("-o", required=True)
+    a = sub.add_parser("calib"); a.add_argument("sat"); a.add_argument("days", nargs="+"); a.add_argument("-o", required=True); a.add_argument("--stk", nargs="*", default=[], help="任务组 STK 星历文件，只定轨道面")
     b = sub.add_parser("validate"); b.add_argument("sat"); b.add_argument("day"); b.add_argument("params")
     c = sub.add_parser("fit"); c.add_argument("sat"); c.add_argument("day"); c.add_argument("params"); c.add_argument("-o", required=True)
     r = sub.add_parser("fit-range"); r.add_argument("sat"); r.add_argument("start"); r.add_argument("end"); r.add_argument("params"); r.add_argument("-o", required=True)
@@ -358,7 +396,7 @@ if __name__ == "__main__":
     args = ap.parse_args()
     if args.cmd == "smooth": smooth(args.sat, args.params, args.o); sys.exit(0)
     if args.cmd == "validate-range": validate_range(args.sat, args.start, args.end, args.params, args.o); sys.exit(0)
-    if args.cmd == "calib": calib(args.sat, args.days, args.o)
+    if args.cmd == "calib": calib(args.sat, args.days, args.o, args.stk)
     elif args.cmd == "validate": validate(args.sat, args.day, args.params)
     elif args.cmd == "fit": fit(args.sat, args.day, args.params, args.o)
     else: fit_range(args.sat, args.start, args.end, args.params, args.o)

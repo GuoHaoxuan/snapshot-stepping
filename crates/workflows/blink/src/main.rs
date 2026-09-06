@@ -178,14 +178,17 @@ fn main() {
                 ),
             }
         }
-        TopCommands::Wwlln { instrument } => match instrument {
-            Instrument::HxmtHe => blink_wwlln::run::<blink_hxmt_he::types::HxmtHe>(),
-            Instrument::SvomGrm => blink_wwlln::run::<blink_svom_grm::types::SvomGrm>(),
-            Instrument::FermiGbm => blink_wwlln::run::<blink_fermi_gbm::types::FermiGbm>(),
-            Instrument::Grid02 => blink_wwlln::run::<blink_grid::types::Grid02>(),
-            Instrument::Grid03b => blink_wwlln::run::<blink_grid::types::Grid03B>(),
-            Instrument::Grid04 => blink_wwlln::run::<blink_grid::types::Grid04>(),
-            Instrument::Grid07 => blink_wwlln::run::<blink_grid::types::Grid07>(),
+        TopCommands::Wwlln {
+            instrument,
+            window_ms,
+        } => match instrument {
+            Instrument::HxmtHe => blink_wwlln::run::<blink_hxmt_he::types::HxmtHe>(window_ms),
+            Instrument::SvomGrm => blink_wwlln::run::<blink_svom_grm::types::SvomGrm>(window_ms),
+            Instrument::FermiGbm => blink_wwlln::run::<blink_fermi_gbm::types::FermiGbm>(window_ms),
+            Instrument::Grid02 => blink_wwlln::run::<blink_grid::types::Grid02>(window_ms),
+            Instrument::Grid03b => blink_wwlln::run::<blink_grid::types::Grid03B>(window_ms),
+            Instrument::Grid04 => blink_wwlln::run::<blink_grid::types::Grid04>(window_ms),
+            Instrument::Grid07 => blink_wwlln::run::<blink_grid::types::Grid07>(window_ms),
         },
         TopCommands::AcdAudit { list, out, scint } => {
             commands::acd_audit::cmd_acd_audit(&list, &out, &scint);

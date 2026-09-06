@@ -39,6 +39,11 @@ pub enum TopCommands {
         /// Instrument whose candidates to enrich
         #[arg(long, value_enum, default_value_t = Instrument::HxmtHe)]
         instrument: Instrument,
+        /// Half-width of the time window around the peak within which a stroke counts as
+        /// associated (ms). 5 ms is the TGF criterion; wider windows serve special tests
+        /// such as electron beams that arrive tens of ms after the stroke.
+        #[arg(long, default_value_t = 5)]
+        window_ms: i64,
     },
     /// Recompute per-candidate ACD coincidence counts from 1K events (offline audit;
     /// needs 1K archive access). Input: CSV with `start`/`stop` columns (UTC or MET),

@@ -90,6 +90,7 @@ fn associate(
     signal: &UnifiedSignal,
     neighbors_10min: u32,
     coverage: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
+    window: TimeDelta,
 ) -> Tgf {
     let peak_time = signal.peak_time();
     let in_coverage = peak_time >= coverage.0 && peak_time <= coverage.1;
@@ -120,8 +121,8 @@ fn associate(
     .filter(|lightning| {
         lightning.is_associated(
             &position,
-            TimeDelta::milliseconds(5),
-            Length::new::<uom::si::length::kilometer>(800.0),
+            window,
+            Length::new::<uom::si::length::kilometer>(ASSOCIATION_KILOMETERS),
         )
     })
     .collect::<Vec<_>>();
@@ -133,7 +134,7 @@ fn associate(
             in_coverage: true,
             coincidence_probability: Some(coincidence_prob(
                 &position,
-                TimeDelta::milliseconds(ASSOCIATION_MILLISECONDS),
+                window,
                 Length::new::<uom::si::length::kilometer>(ASSOCIATION_KILOMETERS),
                 TimeDelta::minutes(2),
             )),
@@ -149,10 +150,15 @@ fn associate(
 /// 下的可见地平，5 ms 覆盖光行时差与两边的计时不确定度。SVOM 轨道高约
 /// 625 km、GBM 约 535 km，几何上同量级，先沿用同一组值；哪颗星要单独定标，
 /// 得先有它自己的认证样本。
-const ASSOCIATION_MILLISECONDS: i64 = 5;
+/// 默认的时间窗半宽；`run` 可按需放宽（如电子束的足点检验）。
+pub const ASSOCIATION_MILLISECONDS: i64 = 5;
 const ASSOCIATION_KILOMETERS: f64 = 800.0;
 
-pub fn run<I: Instrument>() {
+pub fn run<I: Instrument>(window_ms: i64) {
+    let window = TimeDelta::milliseconds(window_ms);
+    if window_ms != ASSOCIATION_MILLISECONDS {
+        eprintln!("filter: association window ±{window_ms} ms (default {ASSOCIATION_MILLISECONDS})");
+    }
     let signals = load_all::<I>();
     let total = signals.len();
     eprintln!("filter: {} candidates to associate ({})", total, I::name());
@@ -207,7 +213,7 @@ pub fn run<I: Instrument>() {
                         if i >= total {
                             break;
                         }
-                        local.push((i, associate(&signals_ref[i], counts_ref[i], coverage)));
+                        local.push((i, associate(&signals_ref[i], counts_ref[i], coverage, window)));
                         let n = done.fetch_add(1, Ordering::Relaxed) + 1;
                         if n % 100_000 == 0 {
                             eprintln!("filter: {n}/{total}");

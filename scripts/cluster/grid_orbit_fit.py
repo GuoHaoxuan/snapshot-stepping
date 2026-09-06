@@ -17,6 +17,10 @@ from datetime import datetime, timezone, timedelta
 G = "/gecamfs/Exchange/GSDC/missions/GRID"; REF = datetime(2018, 1, 1, tzinfo=timezone.utc)
 R_E = 6371.0
 BIN = 10.0
+# 损失函数的口味：极区/极光带的率逐日起伏大（2024 年太阳活动高），模板在那里不稳，
+# 只用 |磁纬| 不超过 MAGLAT_MAX 的格子；残差用 "rms" 或 "mad"（中位绝对偏差，抗离群）
+LOSS = "rms"
+MAGLAT_MAX = None
 # 地磁偶极（IGRF-13 2020 近似）：北磁极 80.7°N, 72.7°W
 POLE_LAT, POLE_LON = np.radians(80.7), np.radians(-72.7)
 
@@ -157,13 +161,18 @@ def fit_day(sat, day, p, verbose=True, period_prior=None, t0_prior=None):
     def loss(t0, period):
         lat, lon = model_latlon(T, p, t0, period, sky)
         pr = np.log(np.maximum(predict_rate(p, lat, lon), 1.0))
+        use = np.ones(len(T), bool) if MAGLAT_MAX is None else (np.abs(dipole_lat(lat, lon)) <= MAGLAT_MAX)
         # 每次过境允许一个增益常数（探测器状态可能不同）：按过境去均值后比对
         resid = []
         i = 0
         for t, r in passes:
             n = int((r > 0).sum()); seg = slice(i, i + n); i += n
-            d = logR[seg] - pr[seg]; resid.append(d - np.median(d))
-        return float(np.sqrt(np.mean(np.concatenate(resid) ** 2)))
+            m = use[seg]
+            if m.sum() < 3: continue
+            d = (logR[seg] - pr[seg])[m]; resid.append(d - np.median(d))
+        if not resid: return np.inf
+        res = np.concatenate(resid)
+        return float(np.median(np.abs(res))) if LOSS == "mad" else float(np.sqrt(np.mean(res ** 2)))
     best = (None, None, np.inf)
     center = period_prior if period_prior else p["period_s"]
     if t0_prior is not None:
@@ -235,7 +244,8 @@ def fit_range(sat, start, end, params, outdir):
     from datetime import date
     p = json.load(open(params)); os.makedirs(os.path.join(outdir, sat), exist_ok=True)
     d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-"))); prior = None; t0_prior = p.get("t0_anchor")
-    log = open(os.path.join(outdir, sat, "fit_log.csv"), "a"); log.write("day,t0_offset,period,loss,passes\n") if os.path.getsize(os.path.join(outdir, sat, "fit_log.csv")) == 0 else None
+    logpath = os.path.join(outdir, sat, "fit_log.csv"); log = open(logpath, "a")
+    if os.path.getsize(logpath) == 0: log.write("day,t0_offset,period,loss,passes,t0_abs\n")
     d = d0
     while d <= d1:
         day = d.strftime("%Y/%m/%d"); out = os.path.join(outdir, sat, d.strftime("%Y%m%d") + ".csv")
@@ -245,8 +255,64 @@ def fit_range(sat, start, end, params, outdir):
                 t0, period, l = best; prior = period; t0_prior = t0
                 write_orbit(sat, day, p, t0, period, out)
                 ref = float(np.floor(t0 / period) * period)
-                log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))}\n"); log.flush()
+                log.write(f"{d.strftime('%Y-%m-%d')},{t0 - ref:.1f},{period:.2f},{l:.3f},{len(load_rates(sat, day))},{t0:.2f}\n"); log.flush()
                 print(f"{day}: period {period:.1f} loss {l:.3f}", flush=True)
+        d += timedelta(days=1)
+
+
+def smooth(sat, params, outdir, max_loss=0.9, max_resid=150.0, degree=3):
+    """把逐日拟合的相位历元串成一条平滑的轨道：升交点时刻 T 对圈数 N 做多项式（周期 = dT/dN 单调缓变），
+    剔除 loss 高或偏离曲线的天，再用平滑模型重写每天的轨道表；被剔除的天删掉表（候选按无星历丢，不造假位置）。"""
+    p = json.load(open(params)); d = os.path.join(outdir, sat)
+    rows = [r for r in csv.DictReader(open(os.path.join(d, "fit_log.csv"))) if r["day"] != "day" and r.get("t0_abs")]
+    rows.sort(key=lambda r: r["day"])
+    T = np.array([float(r["t0_abs"]) for r in rows]); L = np.array([float(r["loss"]) for r in rows]); P = np.array([float(r["period"]) for r in rows])
+    # 圈数：相邻历元之差除以当时的周期取整，累加
+    N = np.zeros(len(T)); 
+    for i in range(1, len(T)): N[i] = N[i - 1] + np.round((T[i] - T[i - 1]) / P[i - 1])
+    good = L <= max_loss
+    for _ in range(6):
+        if good.sum() < degree + 2: break
+        coef = np.polyfit(N[good], T[good], degree); resid = T - np.polyval(coef, N)
+        new_good = good & (np.abs(resid) <= max_resid)
+        if new_good.sum() == good.sum(): break
+        good = new_good
+    coef = np.polyfit(N[good], T[good], degree); resid = T - np.polyval(coef, N)
+    dcoef = np.polyder(coef)
+    print(f"{sat}: {len(rows)} 天，保留 {good.sum()}；残差 |中位| {np.median(np.abs(resid[good])):.1f} s，周期 {np.polyval(dcoef, N[0]):.1f} → {np.polyval(dcoef, N[-1]):.1f} s")
+    with open(os.path.join(d, "smooth_log.csv"), "w") as f:
+        f.write("day,loss,period_fit,period_smooth,resid_s,kept\n")
+        for r, l, pp, n, rs, g in zip(rows, L, P, N, resid, good):
+            f.write(f"{r['day']},{l:.3f},{pp:.1f},{np.polyval(dcoef, n):.2f},{rs:.1f},{int(g)}\n")
+    for r, n, g in zip(rows, N, good):
+        y, m, dd = r["day"].split("-"); out = os.path.join(d, f"{y}{m}{dd}.csv")
+        if not g:
+            if os.path.exists(out): os.remove(out)
+            continue
+        t0 = float(np.polyval(coef, n)); period = float(np.polyval(dcoef, n))
+        write_orbit(sat, f"{y}/{m}/{dd}", p, t0, period, out)
+    print("  剔除的天:", [r["day"] for r, g in zip(rows, good) if not g][:20])
+
+
+def validate_range(sat, start, end, params, outdir):
+    """在有真值的一段上走完整的生产流程（逐日拟合 → 平滑），再逐天量误差。"""
+    from datetime import date
+    fit_range(sat, start, end, params, outdir)
+    smooth(sat, params, outdir)
+    p = json.load(open(params)); d0 = date(*map(int, start.split("-"))); d1 = date(*map(int, end.split("-"))); d = d0
+    while d <= d1:
+        path = os.path.join(outdir, sat, d.strftime("%Y%m%d") + ".csv")
+        pos = load_positions(sat, d.strftime("%Y/%m/%d"))
+        if os.path.exists(path) and pos is not None:
+            T, LAT, LON, ALT, _ = pos; ok = np.isfinite(LAT)
+            tab = np.loadtxt(path, delimiter=",", skiprows=1)
+            if ok.sum() > 10 and len(tab) > 2:
+                lon = np.interp(T[ok], tab[:, 0], np.unwrap(np.radians(tab[:, 1]))); lon = np.degrees(lon); lat = np.interp(T[ok], tab[:, 0], tab[:, 2])
+                inside = (T[ok] >= tab[0, 0]) & (T[ok] <= tab[-1, 0])
+                dist = 2 * (R_E + p["alt_km"]) * np.arcsin(np.sqrt(np.sin(np.radians(lat - LAT[ok]) / 2) ** 2 + np.cos(np.radians(LAT[ok])) * np.cos(np.radians(lat)) * np.sin(np.radians(((lon - LON[ok] + 180) % 360) - 180) / 2) ** 2))
+                dist = dist[inside]
+                if len(dist): print(f"  {d}: 误差中位 {np.median(dist):.0f} km p90 {np.percentile(dist, 90):.0f} max {dist.max():.0f}")
+        elif pos is not None: print(f"  {d}: 无轨道表（被剔除或没数据）")
         d += timedelta(days=1)
 
 
@@ -256,7 +322,11 @@ if __name__ == "__main__":
     b = sub.add_parser("validate"); b.add_argument("sat"); b.add_argument("day"); b.add_argument("params")
     c = sub.add_parser("fit"); c.add_argument("sat"); c.add_argument("day"); c.add_argument("params"); c.add_argument("-o", required=True)
     r = sub.add_parser("fit-range"); r.add_argument("sat"); r.add_argument("start"); r.add_argument("end"); r.add_argument("params"); r.add_argument("-o", required=True)
+    sm = sub.add_parser("smooth"); sm.add_argument("sat"); sm.add_argument("params"); sm.add_argument("-o", required=True)
+    vr = sub.add_parser("validate-range"); vr.add_argument("sat"); vr.add_argument("start"); vr.add_argument("end"); vr.add_argument("params"); vr.add_argument("-o", required=True)
     args = ap.parse_args()
+    if args.cmd == "smooth": smooth(args.sat, args.params, args.o); sys.exit(0)
+    if args.cmd == "validate-range": validate_range(args.sat, args.start, args.end, args.params, args.o); sys.exit(0)
     if args.cmd == "calib": calib(args.sat, args.days, args.o)
     elif args.cmd == "validate": validate(args.sat, args.day, args.params)
     elif args.cmd == "fit": fit(args.sat, args.day, args.params, args.o)

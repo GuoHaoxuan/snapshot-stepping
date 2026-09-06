@@ -73,6 +73,7 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<SvomGrm>, Position>::from(&chunk.orb_file);
 
     let mut n_dropped = 0usize;
+    let mut n_without_attitude = 0usize;
     let mut n_single_detector = 0usize;
     let signals = results
         .into_iter()
@@ -89,12 +90,15 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s，那一截里的
             // 候选取不到星历。丢可以，静默丢不行——记账见 `diagnostics`。
-            let (Some(attitude), Some(position)) =
-                (attitudes.interpolate(peak), positions.interpolate(peak))
-            else {
+            let Some(position) = positions.interpolate(peak) else {
                 n_dropped += 1;
                 return None;
             };
+            // 姿态只是元数据，缺了不丢候选，留空并记账
+            let attitude = attitudes.interpolate(peak).map(|a| a.state);
+            if attitude.is_none() {
+                n_without_attitude += 1;
+            }
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -106,7 +110,7 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 mean: candidate.mean,
                 sf: candidate.sf(),
                 false_positive_per_year: candidate.false_positive_per_year(),
-                attitude: attitude.state,
+                attitude,
                 position: position.state,
                 // 事例表里有一列 ANTI_COIN，但它的语义未经确认，尚未接入
                 // —— 见本 crate 的 `OPEN-QUESTIONS.md`。
@@ -118,6 +122,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .without_attitude
+        .store(n_without_attitude, Ordering::Relaxed);
     chunk
         .dropped_single_detector
         .store(n_single_detector, Ordering::Relaxed);

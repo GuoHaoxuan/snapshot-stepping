@@ -28,6 +28,8 @@ pub struct Chunk {
     /// GRM 的 att/orb 是逐小时文件，尾端比事例流早收约 8 s（实测），
     /// 落在那一截里的候选只能丢——但要计数，不能静默。
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 峰值时刻取不到姿态、姿态留空的候选数（位置有，候选照留），见 `search`
+    pub(super) without_attitude: AtomicUsize,
     /// 候选窗里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
     pub(super) dropped_single_detector: AtomicUsize,
     /// 本小时因落在 GTI 之外而没有进入搜索的事例数，由 `search` 写入。
@@ -96,6 +98,10 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let without_attitude = self.without_attitude.load(Ordering::Relaxed);
+        if without_attitude > 0 {
+            diagnostics.push(("without_attitude", without_attitude as f64));
         }
         let single = self.dropped_single_detector.load(Ordering::Relaxed);
         if single > 0 {

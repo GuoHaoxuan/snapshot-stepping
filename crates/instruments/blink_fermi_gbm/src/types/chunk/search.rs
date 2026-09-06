@@ -104,6 +104,7 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<FermiGbm>, Position>::from(&chunk.poshist);
 
     let mut n_dropped = 0usize;
+    let mut n_without_attitude = 0usize;
     let mut n_single_detector = 0usize;
     let mut n_simultaneous = 0usize;
     let signals = results
@@ -130,12 +131,15 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 return None;
             }
             let peak = candidate.start + candidate.bin_size_best / 2.0;
-            let (Some(attitude), Some(position)) =
-                (attitudes.interpolate(peak), positions.interpolate(peak))
-            else {
+            let Some(position) = positions.interpolate(peak) else {
                 n_dropped += 1;
                 return None;
             };
+            // 姿态只是元数据，缺了不丢候选，留空并记账
+            let attitude = attitudes.interpolate(peak).map(|a| a.state);
+            if attitude.is_none() {
+                n_without_attitude += 1;
+            }
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -147,7 +151,7 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 mean: candidate.mean,
                 sf: candidate.sf(),
                 false_positive_per_year: candidate.false_positive_per_year(),
-                attitude: attitude.state,
+                attitude,
                 position: position.state,
                 // GBM 没有反符合探测器
                 acd: None,
@@ -158,6 +162,9 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .without_attitude
+        .store(n_without_attitude, Ordering::Relaxed);
     chunk
         .dropped_single_detector
         .store(n_single_detector, Ordering::Relaxed);

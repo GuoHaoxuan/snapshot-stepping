@@ -20,6 +20,8 @@ pub struct Chunk {
     /// 本小时实际到齐的探测器类型，顺序即分组下标。
     pub groups: Vec<Detector>,
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 峰值时刻取不到姿态、姿态留空的候选数（位置有，候选照留），见 `search`
+    pub(super) without_attitude: AtomicUsize,
     /// 候选窗里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
     pub(super) dropped_single_detector: AtomicUsize,
     /// 因同一时间戳上挤了太多计数而被判为带电粒子、丢掉的候选数。
@@ -89,6 +91,10 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let without_attitude = self.without_attitude.load(Ordering::Relaxed);
+        if without_attitude > 0 {
+            diagnostics.push(("without_attitude", without_attitude as f64));
         }
         let single = self.dropped_single_detector.load(Ordering::Relaxed);
         if single > 0 {

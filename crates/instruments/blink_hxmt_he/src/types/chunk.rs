@@ -31,6 +31,8 @@ pub struct Chunk {
     /// 本小时因为取不到姿态/轨道而丢掉的候选数，由 `search` 写入。
     /// 星历表两端已经会外推一小截，落到这里的是表真缺了一整段以上的情形。
     pub(super) dropped_no_ephemeris: AtomicUsize,
+    /// 峰值时刻取不到姿态、姿态留空的候选数（位置有，候选照留），见 `search`
+    pub(super) without_attitude: AtomicUsize,
     /// 候选窗里单路探测器占比过高（单路毛刺）而被否决的候选数，见 `search`
     pub(super) dropped_single_detector: AtomicUsize,
     /// 重复行占比缓存。体检和诊断都要它，而它是一遍全表扫描，只算一次。
@@ -108,6 +110,10 @@ impl blink_core::traits::Chunk for Chunk {
         let dropped = self.dropped_no_ephemeris.load(Ordering::Relaxed);
         if dropped > 0 {
             diagnostics.push(("dropped_no_ephemeris", dropped as f64));
+        }
+        let without_attitude = self.without_attitude.load(Ordering::Relaxed);
+        if without_attitude > 0 {
+            diagnostics.push(("without_attitude", without_attitude as f64));
         }
         let single = self.dropped_single_detector.load(Ordering::Relaxed);
         if single > 0 {

@@ -37,7 +37,10 @@ pub struct Signal<E: Event> {
     pub mean: f64,
     pub sf: f64,
     pub false_positive_per_year: f64,
-    pub attitude: Attitude,
+    /// 峰值时刻的姿态。候选的实质是时间加位置，姿态只是方向分析用的元数据：
+    /// 位姿表里姿态解整段缺失时（天格常见）候选照留，这里为 None、不写进 JSON。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attitude: Option<Attitude>,
     pub position: Position,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acd: Option<AcdCounts>,
@@ -76,7 +79,9 @@ pub struct UnifiedSignal {
     pub mean: f64,
     pub sf: f64,
     pub false_positive_per_year: f64,
-    pub attitude: Attitude,
+    /// 见 `Signal::attitude`；`default` 兼容旧文件（缺字段 → None）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attitude: Option<Attitude>,
     pub position: Position,
     pub instrument: String,
     /// `default` 兼容旧 signals.json（无此字段 → None），None 不序列化。

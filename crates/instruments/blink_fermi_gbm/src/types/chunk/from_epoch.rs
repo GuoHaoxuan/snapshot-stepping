@@ -47,6 +47,7 @@ pub(super) fn from_epoch(epoch: &DateTime<Utc>) -> Result<Chunk, Error> {
         poshist,
         groups,
         dropped_no_ephemeris: Default::default(),
+        without_attitude: Default::default(),
         dropped_single_detector: Default::default(),
         dropped_simultaneous: Default::default(),
     })

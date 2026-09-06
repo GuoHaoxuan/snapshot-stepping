@@ -227,13 +227,12 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
                 n_dropped += 1;
                 return None;
             };
-            // 姿态解也会整段缺失（v3 全量 82 个候选、3 个显著落在里面）。`Signal`
-            // 的姿态不是可选项，NaN 写成 null 又读不回来，只能丢弃并单独记账；
-            // 要保留这些候选得把姿态改成可选，见 `OPEN-QUESTIONS.md` 第 13 条。
-            let Some(attitude) = interpolate_sampled(&attitudes, peak) else {
+            // 姿态解也会整段缺失（v3 全量 82 个候选、3 个显著落在里面）。候选的
+            // 实质是时间加位置，姿态只是元数据：缺了照留，留空并记账。
+            let attitude = interpolate_sampled(&attitudes, peak);
+            if attitude.is_none() {
                 n_no_attitude += 1;
-                return None;
-            };
+            }
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -265,7 +264,7 @@ pub(super) fn search<S: Satellite>(chunk: &Chunk<S>) -> Vec<Signal<Event<S>>> {
         .dropped_simultaneous
         .store(n_simultaneous, Ordering::Relaxed);
     chunk
-        .dropped_no_attitude
+        .without_attitude
         .store(n_no_attitude, Ordering::Relaxed);
     chunk
         .dropped_single_detector

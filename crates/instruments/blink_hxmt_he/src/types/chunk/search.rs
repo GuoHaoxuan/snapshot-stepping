@@ -54,6 +54,7 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     let positions = Trajectory::<MissionElapsedTime<HxmtHe>, Position>::from(&chunk.orbit_file);
 
     let mut n_dropped = 0usize;
+    let mut n_without_attitude = 0usize;
     let mut n_single_detector = 0usize;
     let signals = results
         .into_iter()
@@ -70,12 +71,15 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
             let peak = candidate.start + candidate.bin_size_best / 2.0;
             // 星历表两端会外推一小截（见 Trajectory::interpolate）。仍取不到
             // 说明表缺了一整段以上，此时候选只能丢 —— 但要计数，不能静默。
-            let (Some(attitude), Some(position)) =
-                (attitudes.interpolate(peak), positions.interpolate(peak))
-            else {
+            let Some(position) = positions.interpolate(peak) else {
                 n_dropped += 1;
                 return None;
             };
+            // 姿态只是元数据，缺了不丢候选，留空并记账
+            let attitude = attitudes.interpolate(peak).map(|a| a.state);
+            if attitude.is_none() {
+                n_without_attitude += 1;
+            }
             Some(Signal {
                 start: candidate.start,
                 stop: candidate.stop,
@@ -87,7 +91,7 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
                 mean: candidate.mean,
                 sf: candidate.sf(),
                 false_positive_per_year: candidate.false_positive_per_year(),
-                attitude: attitude.state,
+                attitude,
                 position: position.state,
                 // ACD 符合计数必须在此刻统计：候选表落盘后事例流就不在手边了
                 acd: Some(acd_counts(
@@ -102,6 +106,9 @@ pub fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
     chunk
         .dropped_no_ephemeris
         .store(n_dropped, Ordering::Relaxed);
+    chunk
+        .without_attitude
+        .store(n_without_attitude, Ordering::Relaxed);
     chunk
         .dropped_single_detector
         .store(n_single_detector, Ordering::Relaxed);

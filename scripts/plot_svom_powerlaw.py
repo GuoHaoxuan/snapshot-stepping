@@ -29,7 +29,8 @@ def main():
     fa_all = np.array([r["signal"]["false_positive_per_year"] for r in data])
     assoc = np.array([bool(r["lightning"].get("associated")) for r in data])
     prob = np.array([r["lightning"].get("coincidence_probability") or 0.0 for r in data])
-    min_fp, max_fp, bins = 1e-30, fa_all.max(), 100
+    # 下限跟着数据走：SVOM 最亮的候选 fa 到 1e-56，固定 1e-30 会把它们漏出直方图
+    min_fp, max_fp, bins = min(fa_all.min(), 1e-30) / 10.0, fa_all.max(), 100
     edges = np.logspace(np.log10(min_fp), np.log10(max_fp), bins + 1); centers = np.sqrt(edges[:-1] * edges[1:])
     fig = plt.figure(figsize=(20 / 2.54, 7.5 / 2.54), dpi=160)
     n_all, _, _ = plt.hist(fa_all, bins=edges, histtype="step", color="C0")
@@ -40,7 +41,7 @@ def main():
     n_assoc, _, _ = plt.hist(fa_all[assoc], bins=edges, histtype="step", edgecolor="C2", alpha=0.5)
     plt.stairs(n_assoc - mis, edges, fill=False, edgecolor="C2")
     fits = {}
-    for name, cond, y, p0 in (("all_bkg", centers > 1e-3, n_all, None), ("all_tgf", (centers < 1e-8) & (centers > 1e-30), n_all, None), ("assoc", (centers < 1e-2) & (centers > 1e-30), n_assoc, None)):
+    for name, cond, y, p0 in (("all_bkg", centers > 1e-3, n_all, None), ("all_tgf", (centers < 1e-8), n_all, None), ("assoc", (centers < 1e-2), n_assoc, None)):
         m = cond & (y > 0)
         if m.sum() < 3: continue
         try:
@@ -49,7 +50,7 @@ def main():
             print("fit failed", name, e); continue
         fits[name] = params
         x = np.logspace(np.log10(min_fp), np.log10(max_fp), 200); plt.plot(x, power_law(x, *params), color="#AAAAAA", linestyle="--", zorder=-1)
-    plt.axvspan(1e-30, 1e-5, facecolor="C2", edgecolor="None", alpha=0.1, zorder=-2)
+    plt.axvspan(min_fp, 1e-5, facecolor="C2", edgecolor="None", alpha=0.1, zorder=-2)
     plt.axvspan(1e-5, 1, facecolor="C1", edgecolor="None", alpha=0.1, zorder=-2)
     plt.axvspan(1, 20, facecolor="C3", edgecolor="None", alpha=0.1, zorder=-2)
     handles = [mpatches.Patch(edgecolor="C0", facecolor="None", label="全部候选"),

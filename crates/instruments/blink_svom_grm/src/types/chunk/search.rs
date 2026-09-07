@@ -58,6 +58,10 @@ pub(super) fn search(chunk: &Chunk) -> Vec<Signal<Event>> {
         &gti,
         SearchConfig {
             min_duration: Time::new::<uom::si::time::microsecond>(0.0),
+            // 窗长上限 1 ms。试过 5 ms（覆盖期全量重跑，见 OPEN-QUESTIONS 第 17 条）：
+            // 候选多出 47%，但那些新增候选的闪电关联数是 1、偶然期望 1.29，即纯本底；
+            // 82 个已证实 TGF 一个不多一个不少。已证实样本的最佳窗中位只有 0.14 ms，
+            // 宽窗量出的 T90 都在 0.43 ms 以内，1 ms 对探测足够。
             max_duration: Time::new::<uom::si::time::millisecond>(1.0),
             neighbor: Time::new::<uom::si::time::second>(1.0),
             hollow: Time::new::<uom::si::time::millisecond>(10.0),

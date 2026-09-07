@@ -45,10 +45,15 @@ impl blink_core::traits::Event for Event {
     ///
     /// 阈值本身尚未用真实 TGF 能谱定标，只是有实测支撑的起点。
     fn keep(&self) -> bool {
-        // ch15 ≈ 22.5 keV（EBOUNDS 实测）。取 15 而非 HXMT 的 38：GRM 的
-        // ch38 已是 78 keV，切得过狠；且实测 PI≥50 时候选数不降反升——本底
-        // 压得过低，少数事例就能触发。甜区在 15–30。
-        const CHANNEL_THRESHOLD: i16 = 15;
+        // 能阈 ch25（EBOUNDS 实测 42 keV）。GRM 硬件下限是 ch10（15 keV），本底谱在
+        // ch11–19 有个鼓包（每道计数是 ch23 以后的 2–3 倍），是平稳的软本底、不成簇，
+        // 不会自己造候选，但会稀释信噪。用 72 个闪电证实的 TGF 扫能阈：证实 TGF 的
+        // 窗内谱在 ch10–24 都低于本底（窗内/本底 0.19、0.33、0.61），从 ch25 起反超；
+        // ch15→ch25 少 15% 的 TGF 计数、少 43% 的本底，信噪中位 12.4→13.9，达到
+        // p≤1e-8 的比例 85%→93%；ch25–30 是平台，ch40 以上信号计数掉得快。早先的
+        // ch15 是经验值（HXMT 用 ch38，GRM 的 ch38 已是 78 keV 切得过狠；实测 PI≥50
+        // 候选数不降反升）。见 scripts/plot_svom_threshold.py。
+        const CHANNEL_THRESHOLD: i16 = 25;
         // EBOUNDS 顶端两道（257/258）是 10–20 MeV 溢出道。
         const OVERFLOW_CHANNEL: i16 = 256;
 

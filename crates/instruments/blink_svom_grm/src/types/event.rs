@@ -57,7 +57,14 @@ impl blink_core::traits::Event for Event {
         // EBOUNDS 顶端两道（257/258）是 10–20 MeV 溢出道。
         const OVERFLOW_CHANNEL: i16 = 256;
 
-        self.evt_type == 0 && self.channel < OVERFLOW_CHANNEL && self.channel >= CHANNEL_THRESHOLD
+        // ANTI_COIN=1 是星上标定源事例，不是反符合标志：绝对速率恒定在 15–16 c/s
+        // 与总计数率无关，能谱是一条 49–57 keV 的线（占这类事例的 54%），SAA 内
+        // 反而比 SAA 外低。它们不是天体光子，不该进搜索。ch25 之上占 1.56%，
+        // 排除后本底降 1.56%、信号最多损 0.24%。见 evidence/anticoin/。
+        self.evt_type == 0
+            && self.anti_coin == 0
+            && self.channel < OVERFLOW_CHANNEL
+            && self.channel >= CHANNEL_THRESHOLD
     }
 }
 

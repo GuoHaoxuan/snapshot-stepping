@@ -31,15 +31,18 @@ def main():
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 4.8))
     ax = axes[0]
-    sel = (ch >= 10) & (ch <= 200)
-    # 每道计数 / (道宽 × 总曝光)：本底按秒归一；候选窗内按候选数归一（形状对比）
-    ax.step(emin[sel], (hall / width / max(hour_s, 1))[sel], where="post", color="0.4", lw=1.2, label="整小时本底（%.0f h）" % (hour_s / 3600))
-    ax.step(emin[sel], (a / width / max(a.sum(), 1))[sel] * (hall[sel] / width[sel] / max(hour_s, 1)).max(), where="post", color="crimson", lw=1.6, label="证实 TGF 窗内（%d 个事例，形状）" % a.sum())
-    ax.step(emin[sel], (n / width / max(n.sum(), 1))[sel] * (hall[sel] / width[sel] / max(hour_s, 1)).max(), where="post", color="tab:blue", lw=1.2, label="未证实显著候选窗内（%d 个，形状）" % n.sum())
+    sel = (ch >= 10) & (ch <= 255)
+    # 横轴保持能道；本底按秒归一，候选窗内谱按峰归一到本底的峰（只比形状）
+    bkg_per_s = hall / max(hour_s, 1)
+    scale = bkg_per_s[sel].max()
+    ax.step(ch[sel], bkg_per_s[sel], where="mid", color="0.4", lw=1.2, label="整小时本底（%.0f h）" % (hour_s / 3600))
+    ax.step(ch[sel], (a / max(a[sel].max(), 1) * scale)[sel], where="mid", color="crimson", lw=1.6, label="证实 TGF 窗内（%d 个事例，形状）" % a.sum())
+    ax.step(ch[sel], (n / max(n[sel].max(), 1) * scale)[sel], where="mid", color="tab:blue", lw=1.2, label="未证实显著候选窗内（%d 个，形状）" % n.sum())
     for t, c in ((15, "k"), (10, "0.6"), (25, "0.6")):
-        ax.axvline(eb[t][0], color=c, ls="--", lw=1)
-    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlabel("能量 (keV)"); ax.set_ylabel("计数 / keV / s（本底）；候选谱按峰归一")
-    ax.set_title("(a) PI 谱：竖线 = ch10（硬件下限）、ch15（现用能阈）、ch25", fontsize=10); ax.legend(fontsize=8)
+        ax.axvline(t, color=c, ls="--", lw=1)
+    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlabel("PI 能道"); ax.set_ylabel("计数 / 道 / s（本底）；候选谱按峰归一")
+    ax.set_xticks([10, 15, 25, 50, 100, 200]); ax.set_xticklabels(["10", "15", "25", "50", "100", "200"])
+    ax.set_title("(a) PI 谱：竖线 = ch10（硬件下限 %.0f keV）、ch15（现用 %.1f keV）、ch25（%.0f keV）" % (eb[10][0], eb[15][0], eb[25][0]), fontsize=10); ax.legend(fontsize=8)
 
     ax = axes[1]
     xs = [eb[t][0] for t in thr]
@@ -57,7 +60,7 @@ def main():
     brows = list(csv.DictReader(open(args.burst)))
     bands = sorted(set(r["band"] for r in brows), key=lambda s: int(s[2:].split("-")[0]))
     vals = [[float(r["frac_events_in_bursty_bins"]) for r in brows if r["band"] == bnd] for bnd in bands]
-    ax.boxplot(vals, labels=bands, showfliers=False)
+    ax.boxplot(vals, tick_labels=bands, showfliers=False)
     ax.set_yscale("log"); ax.set_ylabel("落在 ≥5 个/ms 格子里的事例占比"); ax.set_xlabel("PI 道段")
     ax.set_title("(c) 低道事例是否成簇（毛刺会抬高低道）", fontsize=10)
     fig.suptitle("SVOM/GRM 能阈核对（现用 PI ≥ 15 ≈ 22.5 keV）", fontsize=12)

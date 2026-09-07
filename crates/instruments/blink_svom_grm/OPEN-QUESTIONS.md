@@ -318,7 +318,11 @@ S 与 B 都只算阈上事例）：
   年化约 750 个 TGF。
 - 图：`scratch_gbm/svom_powerlaw_v6.png`。
 
-### 16. 用 HXMT 论文同一套判选出了 SVOM 目录（2026-09-07）
+### 16. 目录判选沿用 HXMT 论文那一套（用户 2026-09-07 拍板）
+
+**决定：SVOM 的目录判选与 HXMT 完全相同——池级去列车 → fa ≤ 1e-5 直接接受 ∪ (fa ≤ 1 且闪电
+关联)。** 依据是两台仪器的候选分布与分段关联率形状一致（图 `evidence/selection/`，脚本
+`scripts/plot_selection_comparison.py` + `scripts/cluster/selection_bins.py`）。
 
 `blink catalog tgfs.json -o catalog_svom_v6.csv`（svomrun6）：池 25754 → 去列车 65 → 25689；
 选出 947 = 直接（fa ≤ 1e-5）895 + 仅关联（fa ≤ 1 且关联）52；误救期望 0.8。判选规则与 HXMT

@@ -1,0 +1,1653 @@
+[
+  {
+    "signal": {
+      "start": "2020-11-21T21:32:19.906908160Z",
+      "stop": "2020-11-21T21:32:19.910044928Z",
+      "bin_size_min": 0.00026679039001464844,
+      "bin_size_max": 0.0009968280792236328,
+      "bin_size_best": 0.0009195804595947266,
+      "delay": 0.0007753372192382812,
+      "count": 17,
+      "mean": 0.7783923411283364,
+      "sf": 8.2282800696947215e-19,
+      "false_positive_per_year": 2.8237308483244243e-8,
+      "position": {
+        "longitude": -173.367,
+        "latitude": -44.697,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-02"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2021-01-24T18:21:51.249481216Z",
+      "stop": "2021-01-24T18:21:51.252016896Z",
+      "bin_size_min": 0.00024700164794921875,
+      "bin_size_max": 0.0009999275207519531,
+      "bin_size_best": 0.0009653568267822266,
+      "delay": 0.0007688999176025391,
+      "count": 20,
+      "mean": 1.2432625679703668,
+      "sf": 5.790693424305003e-19,
+      "false_positive_per_year": 1.8929827990751e-8,
+      "attitude": {
+        "q1": 0.8869231913623743,
+        "q2": 0.0677927806067844,
+        "q3": 0.30085668368734275
+      },
+      "position": {
+        "longitude": -129.2,
+        "latitude": -53.69,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-02"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2021-01-24T19:54:31.290440704Z",
+      "stop": "2021-01-24T19:54:31.294299392Z",
+      "bin_size_min": 0.00016880035400390625,
+      "bin_size_max": 0.0009996891021728516,
+      "bin_size_best": 0.0009958744049072266,
+      "delay": 0.0011878013610839844,
+      "count": 32,
+      "mean": 1.4807344544465186,
+      "sf": 1.1569087523042448e-32,
+      "false_positive_per_year": 3.666051006212732e-22,
+      "attitude": {
+        "q1": 0.8716659996582088,
+        "q2": 0.05065173362518194,
+        "q3": 0.34249270014830735
+      },
+      "position": {
+        "longitude": -150.457,
+        "latitude": -48.588,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-02"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2021-03-07T09:07:50.309059328Z",
+      "stop": "2021-03-07T09:07:50.312688640Z",
+      "bin_size_min": 0.0002338886260986328,
+      "bin_size_max": 0.0009999275207519531,
+      "bin_size_best": 0.0009653568267822266,
+      "delay": 0.00011420249938964844,
+      "count": 20,
+      "mean": 1.1584281809794477,
+      "sf": 1.4231246549388521e-19,
+      "false_positive_per_year": 4.652207076671929e-9,
+      "attitude": {
+        "q1": 0.9999999441032642,
+        "q2": 0.00004947136505474739,
+        "q3": 0.0000848555904353017
+      },
+      "position": {
+        "longitude": -168.386,
+        "latitude": 51.725,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-02"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-03-13T13:21:57.556239872Z",
+      "stop": "2022-03-13T13:21:57.557007872Z",
+      "bin_size_min": 0.00009131431579589844,
+      "bin_size_max": 0.0007679462432861328,
+      "bin_size_best": 0.00017309188842773438,
+      "delay": 0.0,
+      "count": 12,
+      "mean": 0.09458859670438095,
+      "sf": 7.136535087065986e-24,
+      "false_positive_per_year": 1.3011119221662386e-12,
+      "attitude": {
+        "q1": 0.6367553056182516,
+        "q2": 0.3756494213102002,
+        "q3": -0.3908636133646439
+      },
+      "position": {
+        "longitude": 138.108,
+        "latitude": -13.104,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0008195377806916899,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-03-25T11:46:34.719810304Z",
+      "stop": "2022-03-25T11:46:34.720807424Z",
+      "bin_size_min": 0.00007963180541992188,
+      "bin_size_max": 0.0009970664978027344,
+      "bin_size_best": 0.00007963180541992188,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.040539827823255256,
+      "sf": 7.858350400952812e-19,
+      "false_positive_per_year": 3.114216452903219e-7,
+      "attitude": {
+        "q1": 0.667413592338562,
+        "q2": 0.32552000880241394,
+        "q3": 0.0451119989156723
+      },
+      "position": {
+        "longitude": 160.906,
+        "latitude": -12.373,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": true,
+      "coincidence_probability": 0.0001645524012456974,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-04-14T21:08:44.690336256Z",
+      "stop": "2022-04-14T21:08:44.694238720Z",
+      "bin_size_min": 0.00017261505126953125,
+      "bin_size_max": 0.0009992122650146484,
+      "bin_size_best": 0.0009794235229492188,
+      "delay": 0.0005459785461425781,
+      "count": 33,
+      "mean": 1.640287055966473,
+      "sf": 1.3981690172476774e-32,
+      "false_positive_per_year": 4.504982527459984e-22,
+      "attitude": {
+        "q1": 0.5510973525173597,
+        "q2": -0.2579513743204416,
+        "q3": 0.07493846738339016
+      },
+      "position": {
+        "longitude": -165.494,
+        "latitude": -35.908,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-05-01T21:55:53.129603072Z",
+      "stop": "2022-05-01T21:55:53.130268416Z",
+      "bin_size_min": 0.00021791458129882812,
+      "bin_size_max": 0.0006654262542724609,
+      "bin_size_best": 0.0006654262542724609,
+      "delay": 0.0,
+      "count": 12,
+      "mean": 0.26885909004539826,
+      "sf": 4.799405535842659e-18,
+      "false_positive_per_year": 2.276100757453635e-7,
+      "attitude": {
+        "q1": 0.6955280157810506,
+        "q2": -0.2617889950417869,
+        "q3": -0.44341633399866254
+      },
+      "position": {
+        "longitude": -177.794,
+        "latitude": -38.216,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-05-05T15:38:21.219353088Z",
+      "stop": "2022-05-05T15:38:21.219794432Z",
+      "bin_size_min": 0.00012826919555664062,
+      "bin_size_max": 0.00044155120849609375,
+      "bin_size_best": 0.0002646446228027344,
+      "delay": 0.0,
+      "count": 14,
+      "mean": 0.10478857690841428,
+      "sf": 1.3981474971114776e-27,
+      "false_positive_per_year": 1.667223727713287e-16,
+      "attitude": {
+        "q1": 0.05989923467494762,
+        "q2": 0.7904951096675745,
+        "q3": -0.40182142167694224
+      },
+      "position": {
+        "longitude": 102.728,
+        "latitude": -6.819,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00032781511227667593,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-07-18T15:19:25.516372224Z",
+      "stop": "2022-07-18T15:19:25.516542208Z",
+      "bin_size_min": 0.00011348724365234376,
+      "bin_size_max": 0.0001697540283203125,
+      "bin_size_best": 0.0001697540283203125,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.10048066630044931,
+      "sf": 2.638797736761272e-17,
+      "false_positive_per_year": 4.905575689814312e-6,
+      "position": {
+        "longitude": 111.144,
+        "latitude": -27.963,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-08-19T11:42:21.032251392Z",
+      "stop": "2022-08-19T11:42:21.036246528Z",
+      "bin_size_min": 0.00019121170043945312,
+      "bin_size_max": 0.0009992122650146484,
+      "bin_size_best": 0.0009415149688720704,
+      "delay": 0.0006208419799804688,
+      "count": 21,
+      "mean": 0.7532119678419097,
+      "sf": 8.486647399987983e-25,
+      "false_positive_per_year": 2.8445455764840954e-14,
+      "attitude": {
+        "q1": 0.4860523822350374,
+        "q2": -0.3781721280292985,
+        "q3": -0.09341035130529818
+      },
+      "position": {
+        "longitude": 165.139,
+        "latitude": -31.736,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0006556437387313555,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-08-19T13:18:05.790163968Z",
+      "stop": "2022-08-19T13:18:05.793573120Z",
+      "bin_size_min": 0.0001785755157470703,
+      "bin_size_max": 0.00099945068359375,
+      "bin_size_best": 0.0009970664978027344,
+      "delay": 0.0022308826446533203,
+      "count": 27,
+      "mean": 1.1199373079556425,
+      "sf": 2.654492763421735e-29,
+      "false_positive_per_year": 8.401588160424901e-19,
+      "attitude": {
+        "q1": 0.48332340698431153,
+        "q2": -0.399814083431437,
+        "q3": -0.10755750319604118
+      },
+      "position": {
+        "longitude": 141.32,
+        "latitude": -30.096,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-08-21T01:04:52.474287872Z",
+      "stop": "2022-08-21T01:04:52.475173632Z",
+      "bin_size_min": 0.00001931190490722656,
+      "bin_size_max": 0.0008857250213623047,
+      "bin_size_best": 0.00004124641418457031,
+      "delay": 0.0007338523864746094,
+      "count": 13,
+      "mean": 0.0236646091223764,
+      "sf": 1.938164207021851e-34,
+      "false_positive_per_year": 1.4828879549581131e-22,
+      "attitude": {
+        "q1": 0.17919154105591595,
+        "q2": 0.707600375578231,
+        "q3": 0.47155460018298
+      },
+      "position": {
+        "longitude": 143.593,
+        "latitude": 27.389,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": true,
+      "coincidence_probability": 0.002619168079003442,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-08-29T17:59:58.050667264Z",
+      "stop": "2022-08-29T17:59:58.050745088Z",
+      "bin_size_min": 0.00007772445678710938,
+      "bin_size_max": 0.00007772445678710938,
+      "bin_size_best": 0.00007772445678710938,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.03760607519432921,
+      "sf": 4.0073998252087794e-19,
+      "false_positive_per_year": 1.627080148921448e-7,
+      "attitude": {
+        "q1": 0.54618308309864,
+        "q2": -0.3222296443107098,
+        "q3": -0.12508864858034485
+      },
+      "position": {
+        "longitude": 72.206,
+        "latitude": -30.696,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-10-01T12:34:00.392906752Z",
+      "stop": "2022-10-01T12:34:00.393147648Z",
+      "bin_size_min": 0.00009632110595703124,
+      "bin_size_max": 0.00024080276489257812,
+      "bin_size_best": 0.00012564659118652344,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.08312981458018702,
+      "sf": 4.0271212990978884e-18,
+      "false_positive_per_year": 1.0114582648704796e-6,
+      "position": {
+        "longitude": 146.998,
+        "latitude": -6.769,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.002132044402556958,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-10-04T00:09:56.541491712Z",
+      "stop": "2022-10-04T00:09:56.542326272Z",
+      "bin_size_min": 0.000012159347534179688,
+      "bin_size_max": 0.0008347034454345703,
+      "bin_size_best": 0.00007867813110351562,
+      "delay": 0.0,
+      "count": 21,
+      "mean": 0.032424926445460786,
+      "sf": 1.4965874086340574e-54,
+      "false_positive_per_year": 6.0027743598245915e-43,
+      "attitude": {
+        "q1": 0.10854187761066214,
+        "q2": 0.7338194137869323,
+        "q3": 0.5797845896354374
+      },
+      "position": {
+        "longitude": 152.31,
+        "latitude": -16.258,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": true,
+      "coincidence_probability": 0.000491722668415014,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-10-07T13:04:12.820152320Z",
+      "stop": "2022-10-07T13:04:12.821335040Z",
+      "bin_size_min": 0.00002193450927734375,
+      "bin_size_max": 0.000996112823486328,
+      "bin_size_best": 0.00015926361083984375,
+      "delay": 0.0009357929229736328,
+      "count": 19,
+      "mean": 0.0773795919959753,
+      "sf": 2.2615256172621588e-41,
+      "false_positive_per_year": 4.481144213858156e-30,
+      "attitude": {
+        "q1": 0.5218844150069515,
+        "q2": -0.5938849255793031,
+        "q3": -0.5975340137010363
+      },
+      "position": {
+        "longitude": 141.087,
+        "latitude": -10.82,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00032781511227667593,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-11-22T15:38:14.442247168Z",
+      "stop": "2022-11-22T15:38:14.444035072Z",
+      "bin_size_min": 0.0003643035888671875,
+      "bin_size_max": 0.0009908676147460938,
+      "bin_size_best": 0.000948190689086914,
+      "delay": 0.0003969669342041016,
+      "count": 16,
+      "mean": 0.6867199166931777,
+      "sf": 2.4706101866378957e-18,
+      "false_positive_per_year": 8.222663323231328e-8,
+      "attitude": {
+        "q1": 0.608351731480063,
+        "q2": -0.4236959292905986,
+        "q3": -0.5649033968678836
+      },
+      "position": {
+        "longitude": 105.769,
+        "latitude": -26.375,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2022-11-28T23:13:22.044791808Z",
+      "stop": "2022-11-28T23:13:22.045118208Z",
+      "bin_size_min": 0.00008106231689453125,
+      "bin_size_max": 0.00032639503479003906,
+      "bin_size_best": 0.00032639503479003906,
+      "delay": 0.0,
+      "count": 11,
+      "mean": 0.2489174231238565,
+      "sf": 9.388747587412032e-17,
+      "false_positive_per_year": 9.077538236913036e-6,
+      "attitude": {
+        "q1": 0.22653763494077772,
+        "q2": 0.24625167317468133,
+        "q3": 0.9325555134205176
+      },
+      "position": {
+        "longitude": 171.974,
+        "latitude": 26.957,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0021310559170627766,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-03-20T20:25:56.101399552Z",
+      "stop": "2023-03-20T20:25:56.101652480Z",
+      "bin_size_min": 0.00004673004150390625,
+      "bin_size_max": 0.00025272369384765625,
+      "bin_size_best": 0.00006651878356933594,
+      "delay": 0.0,
+      "count": 12,
+      "mean": 0.012564658997616057,
+      "sf": 3.0875359666765776e-35,
+      "false_positive_per_year": 1.464777613084747e-23,
+      "attitude": {
+        "q1": 0.36188660456218713,
+        "q2": 0.64970704347337,
+        "q3": 0.42131465592400374
+      },
+      "position": {
+        "longitude": 32.204,
+        "latitude": -15.859,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0013125506392394689,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-03-30T07:25:20.206007296Z",
+      "stop": "2023-03-30T07:25:20.206213376Z",
+      "bin_size_min": 0.00020599365234375,
+      "bin_size_max": 0.00020623207092285156,
+      "bin_size_best": 0.00020623207092285156,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.07895146881497057,
+      "sf": 2.4136671582045196e-18,
+      "false_positive_per_year": 3.6933897997004e-7,
+      "attitude": {
+        "q1": 0.0958987557329216,
+        "q2": -0.7536898224411885,
+        "q3": 0.6471187931024218
+      },
+      "position": {
+        "longitude": 55.043,
+        "latitude": 52.487,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-05-14T21:24:58.441203968Z",
+      "stop": "2023-05-14T21:24:58.441399552Z",
+      "bin_size_min": 0.00006842613220214844,
+      "bin_size_max": 0.00019550323486328125,
+      "bin_size_best": 0.00006842613220214844,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.013961695526954424,
+      "sf": 5.485593731680184e-23,
+      "false_positive_per_year": 2.5299131658567604e-11,
+      "attitude": {
+        "q1": 0.02320202900191326,
+        "q2": 0.7913321145414969,
+        "q3": -0.3484124001503517
+      },
+      "position": {
+        "longitude": 15.789,
+        "latitude": -6.426,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.007708983330601541,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-06-02T07:07:31.255405824Z",
+      "stop": "2023-06-02T07:07:31.255872Z",
+      "bin_size_min": 0.0003733634948730469,
+      "bin_size_max": 0.00046634674072265625,
+      "bin_size_best": 0.00046634674072265625,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.11682221271223768,
+      "sf": 1.1732452610803763e-16,
+      "false_positive_per_year": 7.939329562740382e-6,
+      "attitude": {
+        "q1": 0.5560401457298525,
+        "q2": -0.4894001673238151,
+        "q3": -0.6023955618310737
+      },
+      "position": {
+        "longitude": 51.382,
+        "latitude": -5.966,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-06-13T08:34:56.815021568Z",
+      "stop": "2023-06-13T08:34:56.815761408Z",
+      "bin_size_min": 0.00028705596923828125,
+      "bin_size_max": 0.0007395744323730469,
+      "bin_size_best": 0.0007395744323730469,
+      "delay": 0.0,
+      "count": 11,
+      "mean": 0.21365483396072743,
+      "sf": 1.5510110957952396e-17,
+      "false_positive_per_year": 6.618155741216731e-7,
+      "attitude": {
+        "q1": 0.7250452625066828,
+        "q2": 0.40048704713126426,
+        "q3": -0.37413459161462015
+      },
+      "position": {
+        "longitude": 28.038,
+        "latitude": -7.027,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-06-22T07:13:26.169879040Z",
+      "stop": "2023-06-22T07:13:26.170274560Z",
+      "bin_size_min": 0.0003952980041503906,
+      "bin_size_max": 0.0003955364227294922,
+      "bin_size_best": 0.0003955364227294922,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.10148106101564867,
+      "sf": 2.910960872242007e-17,
+      "false_positive_per_year": 2.3224900045346658e-6,
+      "attitude": {
+        "q1": 0.6944358646528812,
+        "q2": 0.4486862241900269,
+        "q3": -0.3447265324353168
+      },
+      "position": {
+        "longitude": 55.006,
+        "latitude": 41.459,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00016390755613833797,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-07-01T14:50:37.072653568Z",
+      "stop": "2023-07-01T14:50:37.072921600Z",
+      "bin_size_min": 0.0000362396240234375,
+      "bin_size_max": 0.0002682209014892578,
+      "bin_size_best": 0.00017523765563964844,
+      "delay": 0.0,
+      "count": 16,
+      "mean": 0.04372090962226068,
+      "sf": 2.1024030117645462e-38,
+      "false_positive_per_year": 3.7861036797076136e-27,
+      "attitude": {
+        "q1": 0.2185330277079771,
+        "q2": -0.8750778344988817,
+        "q3": 0.00434924581633811
+      },
+      "position": {
+        "longitude": 114.728,
+        "latitude": -9.559,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00016390755613833797,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-07-04T17:16:17.498878208Z",
+      "stop": "2023-07-04T17:16:17.499795968Z",
+      "bin_size_min": 0.00013947486877441406,
+      "bin_size_max": 0.000917673110961914,
+      "bin_size_best": 0.0003840923309326172,
+      "delay": 0.0,
+      "count": 10,
+      "mean": 0.10242462059536732,
+      "sf": 2.9684528050828637e-19,
+      "false_positive_per_year": 2.4389251931748965e-8,
+      "attitude": {
+        "q1": 0.2144302954478352,
+        "q2": -0.9578628361304098,
+        "q3": -0.0814159061040387
+      },
+      "position": {
+        "longitude": 70.61,
+        "latitude": 46.86,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0006556302245533519,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-07-15T15:54:35.136678400Z",
+      "stop": "2023-07-15T15:54:35.137383936Z",
+      "bin_size_min": 0.000041961669921875,
+      "bin_size_max": 0.0007054805755615234,
+      "bin_size_best": 0.000051021575927734375,
+      "delay": 0.0005047321319580078,
+      "count": 9,
+      "mean": 0.00907050229977596,
+      "sf": 1.0303133194440151e-27,
+      "false_positive_per_year": 6.372640401335063e-16,
+      "attitude": {
+        "q1": 0.5627298862506223,
+        "q2": 0.6060176654326597,
+        "q3": -0.2228322465861936
+      },
+      "position": {
+        "longitude": -80.984,
+        "latitude": 12.259,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": true,
+      "coincidence_probability": 0.011255058506802163,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-07-27T17:27:41.105408512Z",
+      "stop": "2023-07-27T17:27:41.105438976Z",
+      "bin_size_min": 0.000030517578125,
+      "bin_size_max": 0.000030517578125,
+      "bin_size_best": 0.000030517578125,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.01011087427128807,
+      "sf": 3.0156681648659982e-24,
+      "false_positive_per_year": 3.1184404375003215e-12,
+      "attitude": {
+        "q1": 0.34487182477205636,
+        "q2": -0.5536285279909237,
+        "q3": -0.035322142740460194
+      },
+      "position": {
+        "longitude": 79.871,
+        "latitude": -29.514,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-08-19T11:19:35.883620352Z",
+      "stop": "2023-08-19T11:19:35.883739136Z",
+      "bin_size_min": 0.00011873245239257812,
+      "bin_size_max": 0.00011873245239257812,
+      "bin_size_best": 0.00011873245239257812,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.035979530681460495,
+      "sf": 2.6957249429193753e-19,
+      "false_positive_per_year": 7.164899548894535e-8,
+      "attitude": {
+        "q1": 0.48703502474427296,
+        "q2": -0.35309098600623656,
+        "q3": -0.07556802601493473
+      },
+      "position": {
+        "longitude": 171.258,
+        "latitude": -33.38,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00016390755613833797,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-08-31T09:33:56.320118272Z",
+      "stop": "2023-08-31T09:33:56.320619520Z",
+      "bin_size_min": 0.000469207763671875,
+      "bin_size_max": 0.0005011558532714844,
+      "bin_size_best": 0.0005011558532714844,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.0875757189704845,
+      "sf": 6.753198987699245e-18,
+      "false_positive_per_year": 4.252464597251146e-7,
+      "attitude": {
+        "q1": 0.1211334140153344,
+        "q2": 0.7639339980238731,
+        "q3": 0.5561793383769782
+      },
+      "position": {
+        "longitude": 18.399,
+        "latitude": 32.903,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0018029831175217178,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-09-23T15:04:43.917962496Z",
+      "stop": "2023-09-23T15:04:43.918147328Z",
+      "bin_size_min": 0.00018477439880371096,
+      "bin_size_max": 0.00018477439880371096,
+      "bin_size_best": 0.00018477439880371096,
+      "delay": 0.0,
+      "count": 8,
+      "mean": 0.051139580590415915,
+      "sf": 6.29603897296066e-18,
+      "false_positive_per_year": 1.0752998293025047e-6,
+      "attitude": {
+        "q1": 0.4630489001869158,
+        "q2": 0.46372805760763214,
+        "q3": -0.35935371493832946
+      },
+      "position": {
+        "longitude": 105.501,
+        "latitude": 39.84,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.00032781511227667593,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-10-09T12:02:33.912839936Z",
+      "stop": "2023-10-09T12:02:33.913790720Z",
+      "bin_size_min": 0.00005054473876953125,
+      "bin_size_max": 0.0009505748748779296,
+      "bin_size_best": 0.00009465217590332033,
+      "delay": 0.0005238056182861328,
+      "count": 11,
+      "mean": 0.023519631361531426,
+      "sf": 5.853303615913841e-29,
+      "false_positive_per_year": 1.951526337632593e-17,
+      "attitude": {
+        "q1": 0.702409094121105,
+        "q2": -0.21984150017071524,
+        "q3": -0.365638118460705
+      },
+      "position": {
+        "longitude": 157.616,
+        "latitude": -13.748,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": true,
+      "coincidence_probability": 0.00016390755613833797,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-11-01T06:59:19.445645824Z",
+      "stop": "2023-11-01T06:59:19.446207488Z",
+      "bin_size_min": 0.0004987716674804688,
+      "bin_size_max": 0.0005617141723632812,
+      "bin_size_best": 0.0005617141723632812,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.12085365410184712,
+      "sf": 1.6411269186433576e-16,
+      "false_positive_per_year": 9.219996467221965e-6,
+      "attitude": {
+        "q1": 0.6424326224382213,
+        "q2": 0.4017448503491252,
+        "q3": 0.6149191710129145
+      },
+      "position": {
+        "longitude": 52.342,
+        "latitude": -15.536,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-11-02T11:56:52.775719424Z",
+      "stop": "2023-11-02T11:56:52.776233472Z",
+      "bin_size_min": 0.0005059242248535156,
+      "bin_size_max": 0.0005140304565429688,
+      "bin_size_best": 0.0005140304565429688,
+      "delay": 0.0,
+      "count": 10,
+      "mean": 0.09190241407237956,
+      "sf": 9.096295507814194e-20,
+      "false_positive_per_year": 5.584440600036733e-9,
+      "attitude": {
+        "q1": 0.8583132759463155,
+        "q2": 0.01874570503155759,
+        "q3": -0.2479443610512817
+      },
+      "position": {
+        "longitude": 160.942,
+        "latitude": -22.651,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-11-03T17:57:56.415915520Z",
+      "stop": "2023-11-03T17:57:56.416137216Z",
+      "bin_size_min": 0.000031948089599609375,
+      "bin_size_max": 0.00022172927856445312,
+      "bin_size_best": 0.00006723403930664062,
+      "delay": 0.0,
+      "count": 11,
+      "mean": 0.0122922838356299,
+      "sf": 2.4565541433390654e-32,
+      "false_positive_per_year": 1.1530313191547312e-20,
+      "attitude": {
+        "q1": 0.6490528205436021,
+        "q2": -0.18292188037413837,
+        "q3": -0.6200296026773344
+      },
+      "position": {
+        "longitude": 67.079,
+        "latitude": 19.879,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-11-04T15:56:59.288404736Z",
+      "stop": "2023-11-04T15:56:59.288574976Z",
+      "bin_size_min": 0.0001366138458251953,
+      "bin_size_max": 0.00017023086547851562,
+      "bin_size_best": 0.00017023086547851562,
+      "delay": 0.0,
+      "count": 9,
+      "mean": 0.02819986027226438,
+      "sf": 8.542284786975885e-23,
+      "false_positive_per_year": 1.5835788981962993e-11,
+      "attitude": {
+        "q1": 0.7549236447418508,
+        "q2": -0.10050525278141008,
+        "q3": -0.4914398433784868
+      },
+      "position": {
+        "longitude": 98.568,
+        "latitude": -5.848,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.000983445336830028,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2023-11-18T11:39:47.319548928Z",
+      "stop": "2023-11-18T11:39:47.319974656Z",
+      "bin_size_min": 0.00039267539978027344,
+      "bin_size_max": 0.0004258155822753906,
+      "bin_size_best": 0.0004258155822753906,
+      "delay": 0.0,
+      "count": 10,
+      "mean": 0.13763735860152815,
+      "sf": 7.416078663927394e-18,
+      "false_positive_per_year": 5.496126816077786e-7,
+      "attitude": {
+        "q1": 0.8129854292503751,
+        "q2": 0.001979574059881417,
+        "q3": -0.4699123545137596
+      },
+      "position": {
+        "longitude": 161.217,
+        "latitude": -7.354,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-01T06:15:24.360279808Z",
+      "stop": "2024-01-01T06:15:24.363463680Z",
+      "bin_size_min": 0.00033402442932128906,
+      "bin_size_max": 0.0009989738464355469,
+      "bin_size_best": 0.0009777545928955078,
+      "delay": 0.0014369487762451172,
+      "count": 28,
+      "mean": 3.054742350195467,
+      "sf": 6.879041792547818e-19,
+      "false_positive_per_year": 2.220250877366187e-8,
+      "attitude": {
+        "q1": 0.3574451990769347,
+        "q2": 0.15644245796567624,
+        "q3": -0.9076653563674668
+      },
+      "position": {
+        "longitude": -121.801,
+        "latitude": 46.187,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-02T03:23:39.485748736Z",
+      "stop": "2024-01-02T03:23:39.489731840Z",
+      "bin_size_min": 0.00020551681518554688,
+      "bin_size_max": 0.0009996891021728516,
+      "bin_size_best": 0.0009713172912597656,
+      "delay": 0.0013332366943359375,
+      "count": 27,
+      "mean": 1.2087503952570595,
+      "sf": 2.064400045271392e-28,
+      "false_positive_per_year": 6.7071297355534955e-18,
+      "attitude": {
+        "q1": 0.85746673795677,
+        "q2": 0.1300325511901903,
+        "q3": 0.46392161867855464
+      },
+      "position": {
+        "longitude": 102.953,
+        "latitude": -37.619,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-02T11:17:09.809200128Z",
+      "stop": "2024-01-02T11:17:09.812550912Z",
+      "bin_size_min": 0.0002334117889404297,
+      "bin_size_max": 0.0009992122650146484,
+      "bin_size_best": 0.0009660720825195312,
+      "delay": 0.0006244182586669922,
+      "count": 27,
+      "mean": 1.6891623825577786,
+      "sf": 1.5243074127183896e-24,
+      "false_positive_per_year": 4.9792851359649285e-14,
+      "attitude": {
+        "q1": 0.2788280889656818,
+        "q2": -0.58633311909864,
+        "q3": 0.6199483384046971
+      },
+      "position": {
+        "longitude": 160.068,
+        "latitude": 51.204,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-07"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-09T01:39:19.561045760Z",
+      "stop": "2024-01-09T01:39:19.564227072Z",
+      "bin_size_min": 0.0003209114074707031,
+      "bin_size_max": 0.0009958744049072266,
+      "bin_size_best": 0.0009548664093017578,
+      "delay": 0.0011415481567382812,
+      "count": 20,
+      "mean": 1.4515898304603092,
+      "sf": 1.2288878534594737e-17,
+      "false_positive_per_year": 4.061379785334679e-7,
+      "attitude": {
+        "q1": 0.8627263375322372,
+        "q2": 0.10237802477923896,
+        "q3": 0.43829761787419486
+      },
+      "position": {
+        "longitude": 128.333,
+        "latitude": -39.661,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-14T13:50:21.605346816Z",
+      "stop": "2024-01-14T13:50:21.605732864Z",
+      "bin_size_min": 0.0002913475036621094,
+      "bin_size_max": 0.0003859996795654297,
+      "bin_size_best": 0.0003859996795654297,
+      "delay": 0.0,
+      "count": 10,
+      "mean": 0.1462119984269191,
+      "sf": 1.4304654980012048e-17,
+      "false_positive_per_year": 1.1694843387058026e-6,
+      "attitude": {
+        "q1": 0.6894280351246636,
+        "q2": 0.2814278190902044,
+        "q3": -0.0012121754817204788
+      },
+      "position": {
+        "longitude": 136.512,
+        "latitude": -35.367,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.000491722668415014,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-18T15:57:04.312332800Z",
+      "stop": "2024-01-18T15:57:04.312605696Z",
+      "bin_size_min": 0.000021696090698242188,
+      "bin_size_max": 0.00027298927307128906,
+      "bin_size_best": 0.0000438690185546875,
+      "delay": 0.0,
+      "count": 10,
+      "mean": 0.007710312277761977,
+      "sf": 1.4241853177330163e-31,
+      "false_positive_per_year": 1.0245013921809996e-19,
+      "attitude": {
+        "q1": 0.32885654010367915,
+        "q2": -0.16530237801292458,
+        "q3": 0.8933880406759727
+      },
+      "position": {
+        "longitude": -79.946,
+        "latitude": 8.699,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-03B"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0009834988034748402,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-19T03:05:49.436827904Z",
+      "stop": "2024-01-19T03:05:49.440430080Z",
+      "bin_size_min": 0.0002377033233642578,
+      "bin_size_max": 0.0009953975677490234,
+      "bin_size_best": 0.0008587837219238281,
+      "delay": 0.0003533363342285156,
+      "count": 21,
+      "mean": 1.064371329949395,
+      "sf": 1.2693108317707193e-21,
+      "false_positive_per_year": 4.6643179746064806e-11,
+      "attitude": {
+        "q1": 0.8350215071006062,
+        "q2": 0.04277408968356511,
+        "q3": 0.45501910805427315
+      },
+      "position": {
+        "longitude": 107.646,
+        "latitude": -37.652,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-26T20:04:19.631459072Z",
+      "stop": "2024-01-26T20:04:19.633681920Z",
+      "bin_size_min": 0.0002338886260986328,
+      "bin_size_max": 0.000982046127319336,
+      "bin_size_best": 0.000978231430053711,
+      "delay": 0.00064849853515625,
+      "count": 18,
+      "mean": 0.7074885830013335,
+      "sf": 5.860435341411873e-21,
+      "false_positive_per_year": 1.8905676984840375e-10,
+      "attitude": {
+        "q1": 0.8763557262386215,
+        "q2": 0.05357467027270246,
+        "q3": 0.3211327480542181
+      },
+      "position": {
+        "longitude": -151.235,
+        "latitude": -50.041,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-01-27T22:32:39.873338112Z",
+      "stop": "2024-01-27T22:32:39.876537088Z",
+      "bin_size_min": 0.0004220008850097656,
+      "bin_size_max": 0.000995635986328125,
+      "bin_size_best": 0.0009434223175048828,
+      "delay": 0.0022554397583007812,
+      "count": 20,
+      "mean": 1.41799231810529,
+      "sf": 7.759391445343083e-18,
+      "false_positive_per_year": 2.595526594316458e-7,
+      "attitude": {
+        "q1": 0.4993779677157342,
+        "q2": 0.33642188668159534,
+        "q3": 0.5288230163338028
+      },
+      "position": {
+        "longitude": 170.314,
+        "latitude": -52.939,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-07"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-02-01T13:10:09.632927232Z",
+      "stop": "2024-02-01T13:10:09.636029696Z",
+      "bin_size_min": 0.0003440380096435547,
+      "bin_size_max": 0.0009968280792236328,
+      "bin_size_best": 0.0009641647338867188,
+      "delay": 0.0004868507385253906,
+      "count": 18,
+      "mean": 0.60674204386372,
+      "sf": 3.482069745258265e-22,
+      "false_positive_per_year": 1.1396990610722014e-11,
+      "attitude": {
+        "q1": 0.3774355211355101,
+        "q2": 0.6406501482603062,
+        "q3": 0.40910998403597887
+      },
+      "position": {
+        "longitude": 131.746,
+        "latitude": 54.203,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-04"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  },
+  {
+    "signal": {
+      "start": "2024-02-03T03:55:09.693135872Z",
+      "stop": "2024-02-03T03:55:09.696265984Z",
+      "bin_size_min": 0.00025153160095214844,
+      "bin_size_max": 0.0009963512420654297,
+      "bin_size_best": 0.0009195804595947266,
+      "delay": 0.001852989196777344,
+      "count": 18,
+      "mean": 1.024542663800185,
+      "sf": 4.929480127320638e-18,
+      "false_positive_per_year": 1.691668852277403e-7,
+      "attitude": {
+        "q1": 0.8528019284628172,
+        "q2": 0.013843788000882706,
+        "q3": 0.3247113127770298
+      },
+      "position": {
+        "longitude": 92.926,
+        "latitude": -47.661,
+        "altitude": 100000.0
+      },
+      "instrument": "GRID-07"
+    },
+    "lightning": {
+      "associated": false,
+      "coincidence_probability": 0.0,
+      "in_coverage": true
+    },
+    "train": {
+      "neighbors_10min": 0,
+      "is_train": false
+    }
+  }
+]

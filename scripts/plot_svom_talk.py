@@ -1,0 +1,211 @@
+"""SVOM/GRM TGF 搜索的讲图：给报告用，一张图讲一件事，字号按投影调大。
+
+分析图（evidence/ 下那些）是给复核用的，面板多、字号小，投影看不清；这里只留主线。
+
+用法:
+    python3 scripts/plot_svom_talk.py <tgfs_v8.json> <sample_dir> <per_tgf.csv> -o <目录>
+产出 talk_1_catalog.png / talk_2_criteria.png / talk_3_science.png / talk_4_map.png
+"""
+import argparse, csv, json, os
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from scipy.optimize import curve_fit
+
+plt.rcParams.update({
+    "font.sans-serif": ["PingFang SC", "Arial Unicode MS"], "font.family": "sans-serif",
+    "axes.unicode_minus": False, "font.size": 15, "axes.titlesize": 17, "axes.labelsize": 15,
+    "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 13, "lines.linewidth": 2,
+})
+DIRECT, RESCUE = 1e-5, 1.0
+BLUE, RED, GREY = "#2b6cb0", "#c53030", "0.55"
+
+
+def power_law(x, a, b):
+    return a * x ** b
+
+
+def load_candidates(path):
+    recs = json.load(open(path))
+    fa = np.array([r["signal"]["false_positive_per_year"] for r in recs])
+    assoc = np.array([bool(r["lightning"].get("associated")) for r in recs])
+    cov = np.array([bool(r["lightning"].get("in_coverage", True)) for r in recs])
+    prob = np.array([r["lightning"].get("coincidence_probability") or 0.0 for r in recs])
+    lon = np.array([r["signal"]["position"]["longitude"] for r in recs])
+    lat = np.array([r["signal"]["position"]["latitude"] for r in recs])
+    train = np.array([bool(r["train"].get("is_train")) for r in recs])
+    return fa, assoc, cov, prob, lon, lat, train
+
+
+def fig_catalog(d, out):
+    """图 1：候选数随虚警率的分布，两层判选，以及最终目录。"""
+    fa, assoc, cov, prob, _, _, train = d
+    keep = ~train
+    fig, ax = plt.subplots(figsize=(11, 6.2))
+    lo = min(fa[keep].min(), 1e-30) / 10
+    edges = np.logspace(np.log10(lo), np.log10(fa.max()), 90)
+    centers = np.sqrt(edges[:-1] * edges[1:])
+    n_all, _ = np.histogram(fa[keep], edges)
+    n_as, _ = np.histogram(fa[keep & assoc & cov], edges)
+    ax.step(centers, np.where(n_all > 0, n_all, np.nan), where="mid", color=BLUE, lw=2.2, label="全部候选")
+    ax.step(centers, np.where(n_as > 0, n_as, np.nan), where="mid", color=RED, lw=2.2, label="其中关联到闪电")
+    m = (centers < 1e-8) & (n_all > 0)
+    par, _ = curve_fit(power_law, centers[m], n_all[m], p0=(1, 0.05), maxfev=40000)
+    x = np.logspace(np.log10(lo), 0, 200)
+    ax.plot(x, power_law(x, *par), ls="--", color=GREY, lw=1.8, label="TGF 段幂律（指数 %.3f）" % par[1])
+    # 横轴截到 1e-45：更亮的还有十几个（最亮 1e-84），但那一段每格只有一两个，
+    # 全画出来会把有内容的区间挤扁，讲的时候口头补一句即可
+    xlo, xhi = 1e-45, 20.0
+    ax.axvspan(xlo, DIRECT, facecolor="#2f855a", alpha=0.10, zorder=-2)
+    ax.axvspan(DIRECT, RESCUE, facecolor="#dd6b20", alpha=0.13, zorder=-2)
+    ax.axvspan(RESCUE, xhi, facecolor="#c53030", alpha=0.10, zorder=-2)
+    ax.text(1e-22, 2.2e4, "直接接受 897 个", ha="center", va="top", fontsize=16, color="#22543d")
+    ax.text(2e-3, 2.2e4, "闪电救回 53 个", ha="center", va="top", fontsize=16, color="#7b341e")
+    # 拒绝区在对数轴上只有一个多量级宽，横排放不下，竖排贴在带内
+    ax.text(4.5, 30, "拒绝", ha="center", va="center", fontsize=15, color="#742a2a", rotation=90)
+    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(xhi, xlo)
+    ax.set_ylim(0.5, 4e4)
+    ax.set_xlabel("虚警率 fa（泊松假设下每年多少次）")
+    ax.set_ylabel("候选数")
+    ax.set_title("SVOM/GRM 807 天：25756 个候选 → 目录 950 个", pad=12)
+    ax.legend(loc="upper right", framealpha=0.9)
+    fig.tight_layout(); fig.savefig(out, dpi=160); print("wrote", out)
+
+
+def fig_criteria(d, out):
+    """图 2：分段闪电关联率——两条判选边界的依据。"""
+    fa, assoc, cov, prob, _, _, train = d
+    keep = ~train & cov
+    edges = np.array([1e-30, 1e-15, 1e-10, 1e-7, 1e-5, 1e-3, 1e-1, 1.0, 20.0])
+    x, rate, err, chance, ns = [], [], [], [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        m = keep & (fa >= a) & (fa < b)
+        n = int(m.sum())
+        if n < 5: continue
+        k = int((assoc & m).sum())
+        x.append(np.sqrt(a * b)); rate.append(100 * k / n); err.append(100 * np.sqrt(max(k, 1)) / n)
+        chance.append(100 * prob[m].sum() / n); ns.append(n)
+    x = np.array(x)
+    fig, ax = plt.subplots(figsize=(11, 6.2))
+    ax.axvspan(1e-62, DIRECT, facecolor="#2f855a", alpha=0.10, zorder=-2)
+    ax.axvspan(DIRECT, RESCUE, facecolor="#dd6b20", alpha=0.13, zorder=-2)
+    ax.axvspan(RESCUE, 20, facecolor="#c53030", alpha=0.10, zorder=-2)
+    ax.errorbar(x, rate, yerr=err, fmt="o-", ms=9, lw=2.4, color=RED, capsize=4, label="实测闪电关联率")
+    ax.plot(x, chance, ls=":", lw=2.4, color=GREY, label="偶然关联的期望")
+    for xi, ri, ni in zip(x, rate, ns):
+        ax.annotate("n=%d" % ni, (xi, ri), textcoords="offset points", xytext=(0, -26), ha="center", fontsize=12, color="0.35")
+    ax.axvline(DIRECT, color="k", ls="--", lw=1.5); ax.axvline(RESCUE, color="k", ls="--", lw=1.5)
+    ax.set_xscale("log"); ax.set_xlim(20, 1e-26); ax.set_ylim(-3, 74)
+    ax.set_xlabel("虚警率 fa")
+    ax.set_ylabel("闪电关联率 (%)")
+    ax.set_title("判选的两条线来自数据：1e-5 处关联率陡升，fa > 1 掉回偶然", pad=12)
+    ax.legend(loc="upper right")
+    fig.tight_layout(); fig.savefig(out, dpi=160); print("wrote", out)
+
+
+def fig_science(sample_dir, per_tgf, out):
+    """图 3：证实 TGF 的时间结构与能谱。事例载入与脉冲拟合复用分析脚本，口径一致。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("tgfsample", os.path.join(os.path.dirname(__file__), "plot_svom_tgf_sample.py"))
+    S = importlib.util.module_from_spec(spec); spec.loader.exec_module(S)
+    events, meta, bkg_spec, _bkg_ac1, eb = S.load(sample_dir)
+    rows = list(csv.DictReader(open(per_tgf)))
+    t50 = np.array([float(r["T50_us"]) for r in rows])
+    t90 = np.array([float(r["T90_us"]) for r in rows])
+
+    stack = []; core = np.zeros(259); bkg_scaled = np.zeros(259); total_width = 0.0
+    for i, e in events.items():
+        m = meta.get(i)
+        if m is None: continue
+        live = float(m["bkg_live_s"]); rate = float(m["bkg_counts"]) / live
+        good = (e["evt"] == 0) & (e["anti"] == 0) & (e["pi"] >= S.PI_LO) & (e["pi"] < S.PI_HI)
+        t = e["dt"][good]
+        win = t[np.abs(t) <= S.ANALYSIS_HALF]
+        fit = S.fit_pulse(win, rate)
+        if fit is None: continue
+        _, mu, sig = fit
+        stack.append(win - mu)
+        w = (e["dt"] >= mu - 2 * sig) & (e["dt"] <= mu + 2 * sig) & (e["evt"] == 0) & (e["anti"] == 0)
+        core += np.bincount(np.clip(e["pi"][w], 0, 258), minlength=259)
+        width = 4 * sig
+        total_width += width
+        b_live, b_spec = bkg_spec[i]
+        bkg_scaled += b_spec * (width / b_live)
+    stack = np.concatenate(stack) * 1e6      # µs
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 6.0))
+    ax = axes[0]
+    ax.hist(stack, bins=np.arange(-1000, 1001, 25), color=RED, alpha=0.85)
+    ax.set_xlabel("相对脉冲中心的时间 (µs)"); ax.set_ylabel("计数 / 25 µs")
+    ax.set_title("(a) %d 个证实 TGF 的叠加光变" % len(rows), pad=10)
+    ax.text(0.97, 0.93, "T50 中位 %.0f µs\nT90 中位 %.0f µs" % (np.median(t50), np.median(t90)),
+            transform=ax.transAxes, ha="right", va="top", fontsize=15,
+            bbox=dict(boxstyle="round", fc="white", ec="0.7"))
+
+    ax = axes[1]
+    emin, emax = eb[:, 0], eb[:, 1]          # 分析脚本返回的是 (259, 2) 数组，不是字典
+    net = core - bkg_scaled
+    wk = emax - emin
+    sel = (emin >= 42) & (emax <= 9000) & (net > 0) & (wk > 0)
+    e_ = np.sqrt(emin * emax)[sel]
+    y = (net / wk / max(total_width, 1e-9))[sel]
+    yerr = (np.sqrt(np.maximum(core, 1)) / wk / max(total_width, 1e-9))[sel]
+    ax.errorbar(e_, y, yerr=yerr, fmt="o", ms=5, color=RED, lw=1.2, capsize=0)
+    # 斜率取分析脚本里逐道泊松（Cash）似然、模型在每道积分的拟合结果，这里只拟合归一化。
+    # 逐点最小二乘加几何中心当能量会把指数带偏 0.1–0.2，讲图上不该显示那个数。
+    for lo, hi, ls, idx, err, lab in ((42, 640, "-", -1.01, 0.04, "42–640 keV"),
+                                      (640, 8041, "--", -0.90, 0.07, "640–8041 keV")):
+        m = (e_ >= lo) & (e_ <= hi) & (y > 0)
+        if m.sum() < 5: continue
+        amp, _ = curve_fit(lambda x, a: a * x ** idx, e_[m], y[m], sigma=yerr[m], absolute_sigma=True, p0=(1e3,), maxfev=40000)
+        xs = np.logspace(np.log10(lo), np.log10(hi), 50)
+        ax.plot(xs, amp[0] * xs ** idx, ls=ls, color="k", lw=2.2, label="%s：指数 %.2f ± %.2f" % (lab, idx, err))
+    ax.axvline(640, color=GREY, ls=":", lw=1.6)
+    ax.set_xscale("log"); ax.set_yscale("log")
+    ax.set_xlabel("能量 (keV)"); ax.set_ylabel("计数 / keV / s")
+    ax.set_title("(b) 叠加能谱：到 8 MeV 无截断", pad=10)
+    ax.legend(loc="lower left")
+    fig.suptitle("SVOM/GRM 闪电证实的 TGF：亚毫秒、硬谱", fontsize=18)
+    fig.tight_layout(rect=(0, 0, 1, 0.94)); fig.savefig(out, dpi=160); print("wrote", out)
+
+
+def fig_map(d, per_tgf, out):
+    """图 4：证实 TGF 的地理分布。"""
+    fa, assoc, cov, prob, lon, lat, train = d
+    keep = ~train & cov
+    conf = keep & assoc & (fa <= DIRECT)
+    other = keep & ~assoc & (fa <= DIRECT)
+    fig = plt.figure(figsize=(13.5, 6.4))
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+    span = np.ceil(np.abs(lat[keep]).max()) + 3
+    ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
+    ax.add_feature(cfeature.LAND, facecolor="0.94")
+    ax.add_feature(cfeature.COASTLINE, lw=0.5, edgecolor="0.45")
+    ax.gridlines(draw_labels=False, lw=0.3, color="0.9")
+    ax.scatter(lon[other], lat[other], s=34, c="0.72", lw=0.4, edgecolor="0.45",
+               transform=ccrs.PlateCarree(), zorder=4, label="显著但未关联 (%d)" % other.sum())
+    ax.scatter(lon[conf], lat[conf], s=95, c=RED, marker="*", lw=0.5, edgecolor="k",
+               transform=ccrs.PlateCarree(), zorder=5, label="闪电证实的 TGF (%d)" % conf.sum())
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.20), ncol=2, frameon=False)
+    ax.set_title("闪电证实的 TGF 落在三大雷暴区（偶然关联期望 0.9 个）", pad=12)
+    fig.tight_layout(); fig.savefig(out, dpi=160, bbox_inches="tight"); print("wrote", out)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("tgfs"); ap.add_argument("sample_dir"); ap.add_argument("per_tgf")
+    ap.add_argument("-o", "--outdir", required=True)
+    args = ap.parse_args()
+    os.makedirs(args.outdir, exist_ok=True)
+    d = load_candidates(args.tgfs)
+    fig_catalog(d, os.path.join(args.outdir, "talk_1_catalog.png"))
+    fig_criteria(d, os.path.join(args.outdir, "talk_2_criteria.png"))
+    fig_science(args.sample_dir, args.per_tgf, os.path.join(args.outdir, "talk_3_science.png"))
+    fig_map(d, args.per_tgf, os.path.join(args.outdir, "talk_4_map.png"))
+
+
+if __name__ == "__main__":
+    main()

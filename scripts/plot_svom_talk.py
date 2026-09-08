@@ -176,13 +176,15 @@ def fig_science(sample_dir, per_tgf, out):
         if m.sum() < 5: continue
         amp, _ = curve_fit(lambda x, a: a * x ** idx, e_[m], y[m], sigma=yerr[m], absolute_sigma=True, p0=(1e3,), maxfev=40000)
         xs = np.logspace(np.log10(lo), np.log10(hi), 50)
-        ax.plot(xs, amp[0] * xs ** idx, ls=ls, color="k", lw=2.2, label="%s：指数 %.2f ± %.2f" % (lab, idx, err))
+        ax.plot(xs, amp[0] * xs ** idx, ls=ls, color="k", lw=2.2, label="%s：计数谱指数 %.2f ± %.2f" % (lab, idx, err))
     ax.axvline(640, color=GREY, ls=":", lw=1.6)
     ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel("能量 (keV)"); ax.set_ylabel("计数 / keV / s")
-    ax.set_title("(b) 叠加能谱：到 8 MeV 无截断", pad=10)
+    ax.set_xlabel("能道标称能量 (keV)"); ax.set_ylabel("计数 / keV / s")
+    # 必须写明未解卷积：响应矩阵不可逆，这里画的是计数谱，横轴是 EBOUNDS 的标称能量，
+    # 拟合出的指数不是光子谱指数。要给光子谱得用响应做正向折叠（卡在姿态四元数约定）。
+    ax.set_title("(b) 叠加计数谱（未解卷积）：到 8 MeV 无截断", pad=10)
     ax.legend(loc="lower left")
-    fig.suptitle("SVOM/GRM 闪电证实的 TGF：亚毫秒、硬谱", fontsize=18)
+    fig.suptitle("SVOM/GRM 闪电证实的 TGF：亚毫秒、硬谱（计数谱，未解卷积）", fontsize=18)
     fig.tight_layout(rect=(0, 0, 1, 0.94)); fig.savefig(out, dpi=160); print("wrote", out)
 
 

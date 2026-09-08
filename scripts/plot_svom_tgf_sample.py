@@ -3,7 +3,7 @@
 输入是 `scripts/cluster/svom_tgf_sample.py` 在集群上导出的三份表
 （sample_events.csv / sample_bkg_spec.csv / sample_meta.csv / ebounds.csv）。
 
-时长用非分箱极大似然拟合脉冲宽度给 T50/T90，不是搜索窗长；能谱是叠加的**计数谱**，
+时长用非分箱极大似然拟合脉冲宽度给 T50/T90，不是搜索窗长；能谱是叠加的**沉积能量谱**，
 没有响应矩阵就不能反解光子谱，指数不等于光子谱指数（见图注）。
 
 事例准入：EVT_TYPE==0、25 ≤ PI < 256（v6 搜索的能阈 ch25 ≈ 42 keV）、**ANTI_COIN==0**。
@@ -233,7 +233,7 @@ def main():
     print("逐探头非瘫痪修正后的计数 / 实测: 中位 %.3f, p90 %.3f, max %.3f；有探头饱和(f≥0.95)的 %d 个" % (
         np.median(ncorr / nobs), np.percentile(ncorr / nobs, 90), (ncorr / nobs).max(), nsat))
 
-    # ---- 叠加能谱与幂律拟合（计数谱，不是光子谱）----
+    # ---- 叠加沉积能量谱与幂律拟合（沉积能量谱，不是光子谱）----
     net_spec = core_spec - bkg_spec_scaled
     total_width = sum(r["width"] for r in rows)
     lo_ch, hi_ch = PI_LO, 256
@@ -320,7 +320,7 @@ def main():
         chi = float((((gobs - gmu) ** 2) / np.maximum(gmu, 1e-9)).sum())
         return np.array([a_hat, b_hat]), np.array([np.nan, err]), chi, len(gobs)
 
-    print("叠加计数谱（未解卷积；GRM 两档增益共用一套能道，交界在 ch110 ≈ 640 keV）：")
+    print("叠加沉积能量谱（未解卷积；GRM 两档增益共用一套能道，交界在 ch110 ≈ 640 keV）：")
     print("  标定源（ANTI_COIN=1）在暴发窗内只有 %d 个事例（占阈上 %.2f%%），已扣；本底窗也按 AC=0 统计" % (
         n_ac1_core, 100 * n_ac1_core / max(core_spec[lo_ch:hi_ch].sum() + n_ac1_core, 1)))
     print("  净计数合计 %.0f（原始 %.0f，本底期望 %.0f），溢出道 ch256-258 净 %.1f" % (
@@ -390,7 +390,7 @@ def main():
     a.axvline(640, color="tab:blue", ls=":", lw=1.2, label="两档增益交界 ≈640 keV")
     a.set_xscale("log"); a.set_yscale("log")
     a.set_xlabel("能量 (keV)"); a.set_ylabel("计数 / keV / s")
-    a.set_title("(c) 叠加计数谱：未解卷积，指数 ≠ 光子谱指数", fontsize=10); a.legend(fontsize=7)
+    a.set_title("(c) 叠加沉积能量谱：未解卷积，指数 ≠ 光子谱指数", fontsize=10); a.legend(fontsize=7)
 
     a = ax[1, 1]
     a.hist(nnet, bins=np.arange(0, max(nnet) + 6, 5), color="tab:blue", alpha=0.8,

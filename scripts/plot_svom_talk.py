@@ -187,25 +187,37 @@ def fig_science(sample_dir, per_tgf, out):
 
 
 def fig_map(d, per_tgf, out):
-    """图 4：证实 TGF 的地理分布。"""
+    """图 4：两个时期的地理分布分开画。
+
+    上：有闪电数据的 191 天，红星是证实的 TGF；下：无闪电数据的 601 天，只能给出显著候选。
+    两幅落在同样的三大雷暴区——这就是「覆盖外与覆盖内是同一人群」在地图上的样子。
+    """
     fa, assoc, cov, prob, lon, lat, train = d
-    keep = ~train & cov
-    conf = keep & assoc & (fa <= DIRECT)
-    other = keep & ~assoc & (fa <= DIRECT)
-    fig = plt.figure(figsize=(13.5, 6.4))
-    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
-    span = np.ceil(np.abs(lat[keep]).max()) + 3
-    ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.LAND, facecolor="0.94")
-    ax.add_feature(cfeature.COASTLINE, lw=0.5, edgecolor="0.45")
-    ax.gridlines(draw_labels=False, lw=0.3, color="0.9")
-    ax.scatter(lon[other], lat[other], s=34, c="0.72", lw=0.4, edgecolor="0.45",
-               transform=ccrs.PlateCarree(), zorder=4, label="显著但未关联 (%d)" % other.sum())
-    ax.scatter(lon[conf], lat[conf], s=95, c=RED, marker="*", lw=0.5, edgecolor="k",
+    sig = ~train & (fa <= DIRECT)
+    conf = sig & cov & assoc
+    unconf = sig & cov & ~assoc
+    outside = sig & ~cov
+    span = np.ceil(np.abs(lat[sig]).max()) + 3
+    fig, axes = plt.subplots(2, 1, figsize=(13.5, 9.6), subplot_kw=dict(projection=ccrs.PlateCarree()))
+    for ax in axes:
+        ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
+        ax.add_feature(cfeature.LAND, facecolor="0.94")
+        ax.add_feature(cfeature.COASTLINE, lw=0.5, edgecolor="0.45")
+        ax.gridlines(draw_labels=False, lw=0.3, color="0.9")
+    ax = axes[0]
+    ax.scatter(lon[unconf], lat[unconf], s=34, c="0.72", lw=0.4, edgecolor="0.45",
+               transform=ccrs.PlateCarree(), zorder=4, label="未关联 (%d)" % unconf.sum())
+    ax.scatter(lon[conf], lat[conf], s=110, c=RED, marker="*", lw=0.5, edgecolor="k",
                transform=ccrs.PlateCarree(), zorder=5, label="闪电证实的 TGF (%d)" % conf.sum())
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.20), ncol=2, frameon=False)
-    ax.set_title("闪电证实的 TGF 落在三大雷暴区（偶然关联期望 0.9 个）", pad=12)
-    fig.tight_layout(); fig.savefig(out, dpi=160, bbox_inches="tight"); print("wrote", out)
+    ax.set_title("有闪电数据：2024-06 至 12（191 天）——%d 个显著候选，%d 个被闪电证实" % (int(conf.sum() + unconf.sum()), int(conf.sum())), pad=8)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.28), ncol=2, frameon=False)
+    ax = axes[1]
+    ax.scatter(lon[outside], lat[outside], s=34, c="#2b6cb0", alpha=0.65, lw=0.3, edgecolor="0.35",
+               transform=ccrs.PlateCarree(), zorder=4, label="显著候选，无闪电数据可验证 (%d)" % outside.sum())
+    ax.set_title("无闪电数据：2025-01 之后（601 天）——%d 个显著候选，落在同样的雷暴区" % int(outside.sum()), pad=8)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.28), ncol=1, frameon=False)
+    fig.suptitle("闪电证实的 TGF 与无法验证的候选落在同样的三大雷暴区", fontsize=18)
+    fig.tight_layout(rect=(0, 0, 1, 0.95)); fig.savefig(out, dpi=160, bbox_inches="tight"); print("wrote", out)
 
 
 def main():

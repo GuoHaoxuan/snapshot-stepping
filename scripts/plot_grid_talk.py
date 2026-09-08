@@ -146,12 +146,9 @@ def fig_map_footpoint(d, out, fp_dir=None):
         n_l = res.get(("near", "long"), (0, 0))[0]
         if n_s and n_l:
             rho = k_s / n_s
-            pnull = (1 - rho) ** n_l
-            exp = int(np.floor(np.log10(pnull)))
+            # 只写期望个数，不写 P：先验取自低纬雷暴区，搬到高纬远洋会高估 WWLLN 的效率
             note = ("软暴若是 TGF 的电子束，按短硬暴近足点的关联率 %.0f%% 算，%d 个应有约 %.0f 个\n"
-                    "两个足点都是 0（P = %.0f×10%s）→ 不是 TEB"
-                    % (rho * 100, n_l, rho * n_l, pnull / 10.0 ** exp,
-                       str(exp).replace("-", "⁻").translate(str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹"))))
+                    "两个足点都是 0；软暴的谱又与本底重合 → 不是 TEB" % (rho * 100, n_l, rho * n_l))
             ax.text(0.99, 0.93, note, transform=ax.transAxes, ha="right", va="top", fontsize=13,
                     bbox=dict(boxstyle="round", fc="white", ec="0.7"))
     else:

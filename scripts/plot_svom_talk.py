@@ -40,39 +40,53 @@ def load_candidates(path):
     return fa, assoc, cov, prob, lon, lat, train
 
 
+# 曝光（svomrun8 的 searched_seconds 汇总）：覆盖内 140.2 d / 191 天，覆盖外 469.0 d / 601 天
+EXP_COV, EXP_OUT = 140.2, 469.0
+
+
 def fig_catalog(d, out):
-    """图 1：候选数随虚警率的分布，两层判选，以及最终目录。"""
+    """图 1：两个时期分开画——有闪电数据的能验证，没有的只能用第一层判据。
+
+    这两段必须分开：第二层判选（fa ≤ 1 且关联）只在有闪电数据的时期能用，
+    合在一张图上会让「关联」那条线看起来偏低，其实只是时间基线短了四分之三。
+    """
     fa, assoc, cov, prob, _, _, train = d
     keep = ~train
-    fig, ax = plt.subplots(figsize=(11, 6.2))
-    lo = min(fa[keep].min(), 1e-30) / 10
-    edges = np.logspace(np.log10(lo), np.log10(fa.max()), 90)
+    fig, axes = plt.subplots(1, 2, figsize=(15.5, 6.2), sharey=True)
+    lo, hi = 1e-45, 20.0
+    edges = np.logspace(np.log10(lo), np.log10(hi), 80)
     centers = np.sqrt(edges[:-1] * edges[1:])
-    n_all, _ = np.histogram(fa[keep], edges)
-    n_as, _ = np.histogram(fa[keep & assoc & cov], edges)
-    ax.step(centers, np.where(n_all > 0, n_all, np.nan), where="mid", color=BLUE, lw=2.2, label="全部候选")
-    ax.step(centers, np.where(n_as > 0, n_as, np.nan), where="mid", color=RED, lw=2.2, label="其中关联到闪电")
-    m = (centers < 1e-8) & (n_all > 0)
-    par, _ = curve_fit(power_law, centers[m], n_all[m], p0=(1, 0.05), maxfev=40000)
-    x = np.logspace(np.log10(lo), 0, 200)
-    ax.plot(x, power_law(x, *par), ls="--", color=GREY, lw=1.8, label="TGF 段幂律（指数 %.3f）" % par[1])
-    # 横轴截到 1e-45：更亮的还有十几个（最亮 1e-84），但那一段每格只有一两个，
-    # 全画出来会把有内容的区间挤扁，讲的时候口头补一句即可
-    xlo, xhi = 1e-45, 20.0
-    ax.axvspan(xlo, DIRECT, facecolor="#2f855a", alpha=0.10, zorder=-2)
-    ax.axvspan(DIRECT, RESCUE, facecolor="#dd6b20", alpha=0.13, zorder=-2)
-    ax.axvspan(RESCUE, xhi, facecolor="#c53030", alpha=0.10, zorder=-2)
-    ax.text(1e-22, 2.2e4, "直接接受 897 个", ha="center", va="top", fontsize=16, color="#22543d")
-    ax.text(2e-3, 2.2e4, "闪电救回 53 个", ha="center", va="top", fontsize=16, color="#7b341e")
-    # 拒绝区在对数轴上只有一个多量级宽，横排放不下，竖排贴在带内
-    ax.text(4.5, 30, "拒绝", ha="center", va="center", fontsize=15, color="#742a2a", rotation=90)
-    ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(xhi, xlo)
-    ax.set_ylim(0.5, 4e4)
-    ax.set_xlabel("虚警率 fa（泊松假设下每年多少次）")
-    ax.set_ylabel("候选数")
-    ax.set_title("SVOM/GRM 807 天：25756 个候选 → 目录 950 个", pad=12)
-    ax.legend(loc="upper right", framealpha=0.9)
-    fig.tight_layout(); fig.savefig(out, dpi=160); print("wrote", out)
+    panels = (
+        (axes[0], keep & cov, EXP_COV, "有闪电数据：2024-06 至 12（曝光 140 天）", True),
+        (axes[1], keep & ~cov, EXP_OUT, "无闪电数据：2025-01 之后（曝光 469 天）", False),
+    )
+    for ax, m, exp, title, show_assoc in panels:
+        n_all, _ = np.histogram(fa[m], edges)
+        y = n_all / exp
+        ax.step(centers, np.where(n_all > 0, y, np.nan), where="mid", color=BLUE, lw=2.2, label="全部候选")
+        if show_assoc:
+            n_as, _ = np.histogram(fa[m & assoc], edges)
+            ax.step(centers, np.where(n_as > 0, n_as / exp, np.nan), where="mid", color=RED, lw=2.2, label="关联到闪电")
+        f = (centers < 1e-8) & (n_all > 0)
+        par, _ = curve_fit(power_law, centers[f], y[f], p0=(1, 0.05), maxfev=40000)
+        x = np.logspace(np.log10(lo), 0, 200)
+        ax.plot(x, power_law(x, *par), ls="--", color=GREY, lw=1.8, label="TGF 段幂律 指数 %.3f" % par[1])
+        ax.axvspan(lo, DIRECT, facecolor="#2f855a", alpha=0.10, zorder=-2)
+        ax.axvspan(DIRECT, RESCUE, facecolor="#dd6b20", alpha=0.13 if show_assoc else 0.04, zorder=-2)
+        ax.axvspan(RESCUE, hi, facecolor="#c53030", alpha=0.10, zorder=-2)
+        ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(hi, lo); ax.set_ylim(2e-3, 3e2)
+        ax.set_xlabel("虚警率 fa")
+        ax.set_title(title, pad=10)
+        ax.legend(loc="upper right", framealpha=0.9, fontsize=12)
+    n_d_cov = int(((fa <= DIRECT) & keep & cov).sum()); n_r_cov = int(((fa > DIRECT) & (fa <= RESCUE) & assoc & keep & cov).sum())
+    n_d_out = int(((fa <= DIRECT) & keep & ~cov).sum())
+    axes[0].text(1e-24, 4e1, "直接接受 %d" % n_d_cov, ha="center", fontsize=16, color="#22543d")
+    axes[0].text(2e-3, 4e1, "闪电救回 %d" % n_r_cov, ha="center", fontsize=16, color="#7b341e")
+    axes[1].text(1e-24, 4e1, "直接接受 %d" % n_d_out, ha="center", fontsize=16, color="#22543d")
+    axes[1].text(2e-3, 4e1, "没有闪电数据\n救不回来", ha="center", va="center", fontsize=15, color="#742a2a")
+    axes[0].set_ylabel("候选数 / 曝光天")
+    fig.suptitle("SVOM/GRM 目录 950 个 = 有闪电的 191 天里 %d + 没闪电的 601 天里 %d" % (n_d_cov + n_r_cov, n_d_out), fontsize=18)
+    fig.tight_layout(rect=(0, 0, 1, 0.93)); fig.savefig(out, dpi=160); print("wrote", out)
 
 
 def fig_criteria(d, out):

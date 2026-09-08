@@ -1,11 +1,11 @@
 """天格 GRID TGF 搜索的讲图：给报告用，一张图讲一件事，字号按投影调大。
 
 图 1：显著候选分成两群，短硬暴关联闪电、毫秒级软暴不关联。
-图 2：地理分布 + 磁力线足点检验（软暴不是 TGF 的电子束）。
+图 2：地理分布。
 图 3：两群各举一例的光变与逐事例沉积能量。
 
 用法:
-    python3 scripts/plot_grid_talk.py <features_sig.csv> <tgfs_*.json ...> -o <目录> [--footpoint <dir>]
+    python3 scripts/plot_grid_talk.py <features_sig.csv> <tgfs_*.json ...> -o <目录> [--lightcurves <dir>]
 """
 import argparse, csv, glob, json, os
 import numpy as np
@@ -92,13 +92,15 @@ def fig_two_populations(d, out):
     fig.tight_layout(rect=(0, 0, 1, 0.92)); fig.savefig(out, dpi=160); print("wrote", out)
 
 
-def fig_map_footpoint(d, out, fp_dir=None):
-    """图 2：地理分布，以及足点检验（软暴不是 TGF 的电子束）。"""
+def fig_map(d, out):
+    """图 2：候选的地理分布。
+
+    足点检验（软暴是不是 TGF 的电子束）暂不进讲图，分析还没定论；做法与数字留在
+    `crates/instruments/blink_grid/OPEN-QUESTIONS.md` 和 `scripts/grid_footpoints.py`。
+    """
     s, l, a = d["short"], ~d["short"], d["assoc"]
-    has_fp = fp_dir and os.path.exists(os.path.join(fp_dir, "map.csv"))
-    fig = plt.figure(figsize=(14, 8.4))
-    gs = fig.add_gridspec(2, 1, height_ratios=[1.35, 1], hspace=0.62)
-    ax = fig.add_subplot(gs[0], projection=ccrs.PlateCarree())
+    fig = plt.figure(figsize=(14, 6.4))
+    ax = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
     span = min(90, np.ceil(np.abs(d["lat"]).max()) + 4)
     ax.set_extent([-180, 180, -span, span], crs=ccrs.PlateCarree())
     ax.add_feature(cfeature.LAND, facecolor="0.94")
@@ -110,55 +112,9 @@ def fig_map_footpoint(d, out, fp_dir=None):
                transform=ccrs.PlateCarree(), zorder=5, label="短硬暴，未关联 (%d)" % int((s & ~a).sum()))
     ax.scatter(d["lon"][a], d["lat"][a], s=150, c=RED, marker="*", lw=0.6, edgecolor="k",
                transform=ccrs.PlateCarree(), zorder=6, label="闪电证实的 TGF (%d)" % a.sum())
-    ax.set_title("短硬暴在低纬雷暴区，软暴在高纬", pad=10)
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.24), ncol=3, frameon=False, fontsize=12)
-
-    ax = fig.add_subplot(gs[1])
-    if has_fp:
-        m = {(r["table"], r["shifted_start"]): r for r in csv.DictReader(open(os.path.join(fp_dir, "map.csv")))}
-        res = {}
-        for tag, w in (("near", 10), ("far", 25)):
-            path = os.path.join(fp_dir, "tgfs_%s.json" % tag)
-            if not os.path.exists(path): continue
-            for rec in json.load(open(path)):
-                sig, li = rec["signal"], rec["lightning"]
-                r = m.get((tag, sig["start"][:23]))
-                if r is None: continue
-                key = (tag, r["cls"])
-                n, k = res.get(key, (0, 0))
-                res[key] = (n + 1, k + int(bool(li.get("associated"))))
-        labels, vals, colors = [], [], []
-        for cls, cname, color in (("short", "短硬暴", RED), ("long", "毫秒级软暴", BLUE)):
-            for tag, tname in (("near", "近足点"), ("far", "远足点")):
-                n, k = res.get((tag, cls), (0, 0))
-                labels.append("%s\n%s" % (cname, tname)); vals.append(k); colors.append(color)
-        x = np.arange(len(labels))
-        bars = ax.bar(x, vals, 0.55, color=colors, alpha=0.85)
-        for xi, v, (cls, tag) in zip(x, vals, [(c, t) for c in ("short", "long") for t in ("near", "far")]):
-            n = res.get((tag, cls), (0, 0))[0]
-            ax.text(xi, v + 0.15, "%d / %d" % (v, n), ha="center", fontsize=14)
-        ax.set_xticks(x); ax.set_xticklabels(labels, fontsize=13)
-        ax.set_ylabel("关联到闪电的个数"); ax.set_ylim(0, max(max(vals) * 2.1, 4))
-        ax.yaxis.set_major_locator(plt.MaxNLocator(integer=True))
-        ax.set_title("足点检验：沿磁力线追到 100 km 足点、时刻前移电子飞行时间后再查闪电", pad=10, fontsize=15)
-        # 零结果的说服力按图上实测值现算：拿短硬暴近足点的关联率当先验，看软暴全零有多不像话
-        k_s, n_s = res.get(("near", "short"), (0, 0))[1], res.get(("near", "short"), (0, 0))[0]
-        n_l = res.get(("near", "long"), (0, 0))[0]
-        if n_s and n_l:
-            rho = k_s / n_s
-            # 只写期望个数，不写 P：先验取自低纬雷暴区，搬到高纬远洋会高估 WWLLN 的效率
-            note = ("软暴若是 TGF 的电子束，按短硬暴近足点的关联率 %.0f%% 算，%d 个应有约 %.0f 个\n"
-                    "两个足点都是 0；软暴的谱又与本底重合 → 不是 TEB" % (rho * 100, n_l, rho * n_l))
-            ax.text(0.99, 0.93, note, transform=ax.transAxes, ha="right", va="top", fontsize=13,
-                    bbox=dict(boxstyle="round", fc="white", ec="0.7"))
-    else:
-        ax.axis("off"); ax.text(0.5, 0.5, "足点检验结果未就绪", ha="center", va="center")
-    fig.suptitle("天格：短硬暴是 TGF，毫秒级软暴是磁层电子沉降", fontsize=18)
-    # 地图受投影比例限制、比默认栅格窄，把下面的柱状图收到同样宽度免得头重脚轻
-    fig.canvas.draw()
-    box_map = fig.axes[0].get_position()
-    box_bar = ax.get_position()
-    ax.set_position([box_map.x0, box_bar.y0, box_map.width, box_bar.height])
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.13), ncol=3, frameon=False, fontsize=13)
+    ax.set_title("天格候选的地理分布：短硬暴落在低纬雷暴区，毫秒级软暴落在高磁纬海域",
+                 fontsize=17, pad=12)
     fig.savefig(out, dpi=160, bbox_inches="tight"); print("wrote", out)
 
 
@@ -280,13 +236,13 @@ def fig_lightcurves(lc_dir, out):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("features"); ap.add_argument("tgfs", nargs="+")
-    ap.add_argument("-o", "--outdir", required=True); ap.add_argument("--footpoint")
+    ap.add_argument("-o", "--outdir", required=True)
     ap.add_argument("--lightcurves", help="逐事例导出目录，见 scripts/cluster/grid_lightcurve.py")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
     d = load(args.features, args.tgfs)
     fig_two_populations(d, os.path.join(args.outdir, "grid_talk_1_populations.png"))
-    fig_map_footpoint(d, os.path.join(args.outdir, "grid_talk_2_map.png"), args.footpoint)
+    fig_map(d, os.path.join(args.outdir, "grid_talk_2_map.png"))
     if args.lightcurves:
         fig_lightcurves(args.lightcurves, os.path.join(args.outdir, "grid_talk_3_lightcurves.png"))
 

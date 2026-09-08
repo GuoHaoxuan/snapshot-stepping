@@ -105,3 +105,6 @@ docs/
 # Tool run logs
 scripts/freeze_numbers_run.log
 
+
+# 本地分析用的中间数据，不进仓库
+scratch_gbm/
